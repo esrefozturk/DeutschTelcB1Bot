@@ -29,11 +29,11 @@ logger = logging.getLogger(__name__)
 # Module-level client — initialised once by init_gemini()
 _client: Optional[genai.Client] = None
 
-# Fallback chain: primary first, then fallbacks in order
+# Fallback chain: primary first, then fallbacks in order.
+# Limits are for the paid tier-1 project (billing enabled).
 MODELS: List[str] = [
-    "gemini-2.5-flash",       # 5 RPM / 20 RPD — best quality
-    "gemini-2.5-flash-lite",  # 10 RPM / 20 RPD — higher RPM
-    "gemini-3-flash",         # 5 RPM / 20 RPD — experimental
+    "gemini-2.5-flash",       # 1 000 RPM / 10 000 RPD — best quality
+    "gemini-2.5-flash-lite",  # 4 000 RPM / unlimited RPD — safety fallback
 ]
 
 
