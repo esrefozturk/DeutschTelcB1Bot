@@ -1,0 +1,47 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Got an idea? Describe it below. The more detail, the better.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What's missing or frustrating about the current experience?
+      placeholder: "Currently, there's no way to..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How do you imagine this working?
+      placeholder: "A new /command that... or a button that..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches you thought about?
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Feature area
+      options:
+        - Question generation / AI
+        - User experience / UI
+        - Performance / spaced repetition
+        - Exam mode
+        - Reminders / notifications
+        - Infrastructure / deployment
+        - Other
+    validations:
+      required: true
