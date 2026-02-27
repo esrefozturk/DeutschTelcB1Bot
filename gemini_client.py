@@ -18,7 +18,7 @@ from adaptive import get_subtopic_description, difficulty_label
 
 # Module-level client — initialised once by init_gemini()
 _client: Optional[genai.Client] = None
-MODEL = "gemini-2.0-flash"   # best model available; requires billing enabled on the GCP project
+MODEL = "gemini-2.5-flash"   # free tier on this project: 5 RPM / 20 RPD
 
 
 def init_gemini(api_key: str):
