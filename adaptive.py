@@ -4,11 +4,12 @@ Adaptive learning engine for the TELC B1 bot.
 Responsibilities:
   - Define the B1 topic/subtopic taxonomy
   - Pick the next (topic, subtopic, question_type, difficulty) tuple
-    weighted by the user's past performance
-  - Adjust difficulty after each answer
+    weighted by the user's past performance + SRS overdue factor
+  - Adjust difficulty and review interval after each answer
 """
 
 import random
+from datetime import datetime, timezone
 from typing import Tuple, List, Dict
 
 # ── Topic taxonomy ────────────────────────────────────────────────────────────
@@ -117,6 +118,43 @@ def difficulty_label(d: float) -> str:
     return "advanced"
 
 
+# ── Spaced Repetition (SRS) ───────────────────────────────────────────────────
+
+SRS_MIN_INTERVAL = 1.0   # days
+SRS_MAX_INTERVAL = 30.0  # days
+
+
+def next_review_interval(current_interval: float, is_correct: bool) -> float:
+    """
+    Compute the next SRS review interval in days.
+      Correct → double the interval (capped at 30 days)
+      Wrong   → reset to 1 day
+    """
+    if is_correct:
+        return min(SRS_MAX_INTERVAL, current_interval * 2.0)
+    return SRS_MIN_INTERVAL
+
+
+def _srs_factor(last_tested: str, review_interval: float) -> float:
+    """
+    Return a weight multiplier based on how overdue a subtopic is for review.
+    Subtopics never seen get a high priority factor of 2.0.
+    Subtopics that are on schedule get 1.0.
+    Each day overdue adds 0.3 (capped at 14 overdue days → max factor ~5.2).
+    """
+    if not last_tested:
+        return 2.0  # never tested → high priority
+    try:
+        last_dt = datetime.fromisoformat(last_tested)
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+        days_since = (datetime.now(timezone.utc) - last_dt).total_seconds() / 86400
+        overdue    = max(0.0, days_since - review_interval)
+        return 1.0 + min(overdue, 14.0) * 0.3
+    except Exception:
+        return 1.0
+
+
 # ── Topic selection ───────────────────────────────────────────────────────────
 
 # Base topic weights (tune as needed)
@@ -140,14 +178,10 @@ def pick_next_params(
     Return (topic, subtopic, question_type, difficulty) for the next question.
 
     Selection logic:
-      1. Build a weighted list of (topic, subtopic) pairs.
-         Weight = base_topic_weight × (1 + error_rate²)
-         → subtopics with more errors surface more often.
-      2. Add a small exploration weight to every unseen subtopic so the user
-         eventually covers all material.
-      3. Sample randomly.
+      weight = base_topic_weight × (1 + error_rate²) × srs_factor
+      srs_factor rises the longer a subtopic is overdue for review,
+      so items due for spaced repetition surface more often.
     """
-    # Index existing performance rows
     perf: Dict[Tuple[str, str], Dict] = {
         (r["topic"], r["subtopic"]): r for r in performance_rows
     }
@@ -159,14 +193,16 @@ def pick_next_params(
         for subtopic in topic_data["subtopics"]:
             key = (topic, subtopic)
             if key in perf:
-                p = perf[key]
-                er = _error_rate(p["correct"], p["incorrect"])
+                p    = perf[key]
+                er   = _error_rate(p["correct"], p["incorrect"])
                 diff = p["difficulty"]
+                srs  = _srs_factor(p.get("last_tested", ""), p.get("review_interval", 1.0))
             else:
                 er   = 0.5   # unseen → treat as 50% error (needs practice)
-                diff = 2.0   # default starting difficulty
+                diff = 2.0
+                srs  = 2.0   # never tested → high priority
 
-            weight = base_w * (1.0 + er ** 2)
+            weight = base_w * (1.0 + er ** 2) * srs
             candidates.append((weight, topic, subtopic, diff))
 
     # Weighted random selection

@@ -8,8 +8,9 @@ Tables (names set via env vars):
   PERFORMANCE_TABLE — PK: user_id (S), SK: topic_subtopic (S)
 """
 
+import json
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -72,6 +73,7 @@ class DynamoDatabase:
                     "first_name":         item.get("first_name", ""),
                     "last_active":        item.get("last_active", ""),
                     "last_reminder_sent": item.get("last_reminder_sent", ""),
+                    "current_streak":     _int(item.get("current_streak", 0)),
                 })
             if "LastEvaluatedKey" not in resp:
                 break
@@ -85,17 +87,45 @@ class DynamoDatabase:
             ExpressionAttributeValues={":now": _now()},
         )
 
+    def update_streak(self, user_id: int) -> tuple[int, bool]:
+        """
+        Update daily streak. Returns (new_streak, is_new_day).
+        is_new_day is True when this is the first answer of a calendar day.
+        """
+        today     = date.today().isoformat()
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+        resp = self._users.get_item(
+            Key={"user_id": str(user_id)},
+            ProjectionExpression="current_streak, last_streak_date",
+        )
+        item           = resp.get("Item", {})
+        last_date      = item.get("last_streak_date", "")
+        current_streak = _int(item.get("current_streak", 0))
+
+        if last_date == today:
+            return current_streak, False  # already practiced today
+
+        new_streak = (current_streak + 1) if last_date == yesterday else 1
+        self._users.update_item(
+            Key={"user_id": str(user_id)},
+            UpdateExpression="SET current_streak = :s, last_streak_date = :d",
+            ExpressionAttributeValues={":s": new_streak, ":d": today},
+        )
+        return new_streak, True
+
     def get_user(self, user_id: int) -> Optional[Dict]:
         resp = self._users.get_item(Key={"user_id": str(user_id)})
         item = resp.get("Item")
         if not item:
             return None
         return {
-            "user_id":    int(item["user_id"]),
-            "username":   item.get("username", ""),
-            "first_name": item.get("first_name", ""),
-            "is_paused":  _int(item.get("is_paused", 0)),
-            "created_at": item.get("created_at", ""),
+            "user_id":        int(item["user_id"]),
+            "username":       item.get("username", ""),
+            "first_name":     item.get("first_name", ""),
+            "is_paused":      _int(item.get("is_paused", 0)),
+            "created_at":     item.get("created_at", ""),
+            "current_streak": _int(item.get("current_streak", 0)),
         }
 
     def set_paused(self, user_id: int, paused: bool):
@@ -108,7 +138,6 @@ class DynamoDatabase:
     # ── Sessions / Pending question ─────────────────────────────────────
 
     def get_pending_question(self, user_id: int) -> Optional[Dict]:
-        import json
         resp = self._sessions.get_item(Key={"user_id": str(user_id)})
         item = resp.get("Item")
         if not item or not item.get("pending_question"):
@@ -117,7 +146,6 @@ class DynamoDatabase:
         return json.loads(raw) if isinstance(raw, str) else raw
 
     def set_pending_question(self, user_id: int, question: Optional[Dict]):
-        import json
         payload = json.dumps(question) if question is not None else None
         self._sessions.update_item(
             Key={"user_id": str(user_id)},
@@ -132,6 +160,25 @@ class DynamoDatabase:
                 ":zero": 0,
                 ":inc":  1 if question is not None else 0,
             },
+        )
+
+    def get_exam_state(self, user_id: int) -> Optional[Dict]:
+        resp = self._sessions.get_item(
+            Key={"user_id": str(user_id)},
+            ProjectionExpression="exam_state",
+        )
+        item = resp.get("Item")
+        if not item or not item.get("exam_state"):
+            return None
+        raw = item["exam_state"]
+        return json.loads(raw) if isinstance(raw, str) else raw
+
+    def set_exam_state(self, user_id: int, state: Optional[Dict]):
+        payload = json.dumps(state) if state is not None else None
+        self._sessions.update_item(
+            Key={"user_id": str(user_id)},
+            UpdateExpression="SET exam_state = :s",
+            ExpressionAttributeValues={":s": payload},
         )
 
     def get_questions_sent(self, user_id: int) -> int:
@@ -152,30 +199,32 @@ class DynamoDatabase:
         for item in resp.get("Items", []):
             parts = item["topic_subtopic"].split("#", 1)
             result.append({
-                "topic":       parts[0],
-                "subtopic":    parts[1] if len(parts) > 1 else "",
-                "correct":     _int(item.get("correct",     0)),
-                "incorrect":   _int(item.get("incorrect",   0)),
-                "total_score": _float(item.get("total_score", 0.0)),
-                "difficulty":  _float(item.get("difficulty",  2.0)),
-                "last_tested": item.get("last_tested", ""),
+                "topic":           parts[0],
+                "subtopic":        parts[1] if len(parts) > 1 else "",
+                "correct":         _int(item.get("correct",          0)),
+                "incorrect":       _int(item.get("incorrect",        0)),
+                "total_score":     _float(item.get("total_score",    0.0)),
+                "difficulty":      _float(item.get("difficulty",     2.0)),
+                "review_interval": _float(item.get("review_interval", 1.0)),
+                "last_tested":     item.get("last_tested", ""),
             })
         return result
 
     def get_topic_performance(self, user_id: int, topic: str, subtopic: str) -> Dict:
         resp = self._performance.get_item(
             Key={
-                "user_id":       str(user_id),
+                "user_id":        str(user_id),
                 "topic_subtopic": f"{topic}#{subtopic}",
             }
         )
         item = resp.get("Item")
         if not item:
-            return {"correct": 0, "incorrect": 0, "difficulty": 2.0}
+            return {"correct": 0, "incorrect": 0, "difficulty": 2.0, "review_interval": 1.0}
         return {
-            "correct":    _int(item.get("correct",   0)),
-            "incorrect":  _int(item.get("incorrect", 0)),
-            "difficulty": _float(item.get("difficulty", 2.0)),
+            "correct":         _int(item.get("correct",          0)),
+            "incorrect":       _int(item.get("incorrect",        0)),
+            "difficulty":      _float(item.get("difficulty",     2.0)),
+            "review_interval": _float(item.get("review_interval", 1.0)),
         }
 
     def update_performance(
@@ -186,8 +235,8 @@ class DynamoDatabase:
         is_correct: bool,
         score: float,
         new_difficulty: float,
+        review_interval: float,
     ):
-        # ADD atomically increments (creates with value 0+inc if item is new)
         self._performance.update_item(
             Key={
                 "user_id":        str(user_id),
@@ -195,7 +244,7 @@ class DynamoDatabase:
             },
             UpdateExpression=(
                 "ADD #c :c_val, #i :i_val, total_score :score "
-                "SET difficulty = :diff, last_tested = :now"
+                "SET difficulty = :diff, review_interval = :ri, last_tested = :now"
             ),
             ExpressionAttributeNames={
                 "#c": "correct",
@@ -206,6 +255,7 @@ class DynamoDatabase:
                 ":i_val": Decimal(str(int(not is_correct))),
                 ":score": Decimal(str(round(score, 4))),
                 ":diff":  Decimal(str(round(new_difficulty, 2))),
+                ":ri":    Decimal(str(round(review_interval, 1))),
                 ":now":   _now(),
             },
         )
@@ -220,7 +270,6 @@ class DynamoDatabase:
         accuracy        = round(total_correct / total * 100, 1) if total else 0
         avg_score       = round(total_score    / total * 100, 1) if total else 0
 
-        # Weak areas: subtopics with ≥2 attempts, sorted by error rate
         weak = []
         for r in rows:
             t = r["correct"] + r["incorrect"]
@@ -234,12 +283,16 @@ class DynamoDatabase:
         weak.sort(key=lambda x: -x["error_rate"])
         weak = weak[:3]
 
+        user      = self.get_user(user_id)
+        streak    = user["current_streak"] if user else 0
+
         return {
             "total_correct":   total_correct,
             "total_incorrect": total_incorrect,
             "total_questions": total,
             "accuracy":        accuracy,
             "avg_score":       avg_score,
+            "streak":          streak,
             "weak_areas":      weak,
             "questions_sent":  self.get_questions_sent(user_id),
         }

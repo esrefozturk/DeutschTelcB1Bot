@@ -40,6 +40,7 @@ from database_dynamo import DynamoDatabase
 # it just imports the *class*, no SQLite file is opened until Database() is
 # instantiated.  We never call bot.main() here, so no SQLite DB is created.
 from bot import (
+    cmd_exam,
     cmd_help,
     cmd_next,
     cmd_start,
@@ -71,6 +72,7 @@ async def _build_application() -> Application:
 
     app.add_handler(CommandHandler("start",  cmd_start))
     app.add_handler(CommandHandler("next",   cmd_next))
+    app.add_handler(CommandHandler("exam",   cmd_exam))
     app.add_handler(CommandHandler("stats",  cmd_stats))
     app.add_handler(CommandHandler("topic",  cmd_topic))
     app.add_handler(CommandHandler("help",   cmd_help))
@@ -165,12 +167,17 @@ async def _maybe_send_inactivity_nudge(bot, user: dict, now: datetime) -> None:
             if (now - last_reminder).total_seconds() / 3600 < REMINDER_COOLDOWN_HOURS:
                 return
 
+        streak = user.get("current_streak", 0)
+        streak_line = (
+            f"\n\n⚠️ Don't break your <b>{streak}-day streak!</b>"
+            if streak > 1 else ""
+        )
         await bot.send_message(
             chat_id=uid,
             text=(
                 "👋 <b>Zeit zu üben!</b> You haven't practiced German in a while.\n\n"
                 "A quick session now will keep your skills sharp. "
-                "Type /next for your next question! 🇩🇪"
+                f"Type /next for your next question! 🇩🇪{streak_line}"
             ),
             parse_mode="HTML",
         )

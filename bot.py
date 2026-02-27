@@ -4,6 +4,7 @@ TELC B1 German Preparation Bot
 Commands:
   /start   – Welcome + start practice
   /next    – Get the next question immediately
+  /exam    – Start a 20-question TELC B1 practice exam
   /stats   – Show personal performance statistics
   /topic   – List topics / focus on a specific topic
   /help    – Command reference
@@ -14,6 +15,7 @@ Any non-command message is treated as the answer to the pending question.
 import html
 import logging
 import os
+import random
 from textwrap import dedent
 from typing import Optional
 
@@ -34,8 +36,10 @@ from telegram.ext import (
 )
 
 from adaptive import (
+    QUESTION_TYPES_BY_TOPIC,
     TOPICS,
     adjust_difficulty,
+    next_review_interval,
     pick_next_params,
 )
 from database import Database
@@ -65,15 +69,16 @@ WELCOME_MSG = (
     "• Vocabulary (daily life, work, travel, …)\n"
     "• Reading comprehension\n"
     "• Writing tasks\n\n"
-    "Questions are chosen based on your past answers, so the areas you "
-    "struggle with will appear more often — keeping you growing.\n\n"
-    "Type /next (or just answer) to begin. Viel Erfolg! 🇩🇪"
+    "Questions use spaced repetition — topics due for review surface more often, "
+    "and your streak grows every day you practice.\n\n"
+    "Type /next to begin, or /exam for a full practice test. Viel Erfolg! 🇩🇪"
 )
 
 HELP_MSG = (
     "<b>Commands</b>\n\n"
     "/start  – Welcome message\n"
     "/next   – Get the next question now\n"
+    "/exam   – 20-question TELC B1 practice test\n"
     "/stats  – Your performance summary\n"
     "/topic  – Browse or focus on a topic\n"
     "/help   – This message\n\n"
@@ -83,11 +88,28 @@ HELP_MSG = (
     "• Minor spelling mistakes are OK; grammar concepts are graded strictly."
 )
 
+# Streak milestone messages
+_STREAK_MILESTONES = {
+    3:   "🌱 <b>3-day streak!</b> You're building a habit!",
+    7:   "⭐ <b>7-day streak!</b> One full week — Wunderbar!",
+    14:  "🌟 <b>14-day streak!</b> Two weeks of German!",
+    30:  "🏆 <b>30-day streak!</b> An entire month — incredible!",
+    50:  "💎 <b>50-day streak!</b> Unstoppable!",
+    100: "🔱 <b>100-day streak!</b> You're a legend!",
+}
+
+# Exam question distribution across topics
+_EXAM_DISTRIBUTION = [
+    ("grammar",    8),
+    ("vocabulary", 6),
+    ("reading",    4),
+    ("writing",    2),
+]
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _esc(text: str) -> str:
-    """Escape text for Telegram HTML parse mode."""
     return html.escape(str(text))
 
 
@@ -97,7 +119,6 @@ def _difficulty_stars(d: float) -> str:
 
 
 def _build_mc_keyboard(options: list[str]) -> InlineKeyboardMarkup:
-    """One button per option, each on its own row."""
     buttons = [
         [InlineKeyboardButton(opt, callback_data=f"answer:{opt[0]}")]
         for opt in options
@@ -106,28 +127,39 @@ def _build_mc_keyboard(options: list[str]) -> InlineKeyboardMarkup:
 
 
 def _action_keyboard() -> InlineKeyboardMarkup:
-    """Buttons shown after evaluation: explain or continue."""
+    """Buttons after normal evaluation."""
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("💡 Explain More", callback_data="explain"),
         InlineKeyboardButton("➡️ Next Question", callback_data="next_q"),
     ]])
 
 
-def _fmt_question(q: dict, is_first: bool = False) -> str:
-    """Format a question dict into Telegram HTML."""
+def _exam_keyboard() -> InlineKeyboardMarkup:
+    """Button after exam question evaluation — no explanation during exam."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("➡️ Next Question", callback_data="exam_next"),
+    ]])
+
+
+def _fmt_question(q: dict, is_first: bool = False, progress: str = "") -> str:
     topic_label    = TOPICS.get(q["topic"], {}).get("label", q["topic"])
     subtopic_label = TOPICS.get(q["topic"], {}).get("subtopics", {}).get(q["subtopic"], q["subtopic"])
     stars          = _difficulty_stars(q.get("difficulty", 2))
     qtype_pretty   = q["question_type"].replace("_", " ").title()
 
-    divider = "" if is_first else "〰️〰️〰️ <b>Next Question</b> 〰️〰️〰️\n\n"
+    if progress:
+        divider = f"📝 <b>{_esc(progress)}</b>\n\n"
+    elif is_first:
+        divider = ""
+    else:
+        divider = "〰️〰️〰️ <b>Next Question</b> 〰️〰️〰️\n\n"
+
     header = (
         f"{divider}"
         f"📚 <b>{_esc(topic_label)}</b> › <i>{_esc(subtopic_label)}</i>\n"
         f"Difficulty: {stars}  |  Type: {_esc(qtype_pretty)}\n\n"
     )
 
-    # Escape AI content, then replace blank marker with a visible code span.
     body = _esc(q["question"]).replace("___", "<code>______</code>")
 
     if q["question_type"] == "sentence_building":
@@ -140,6 +172,26 @@ def _fmt_question(q: dict, is_first: bool = False) -> str:
     return header + body
 
 
+def _build_exam_plan() -> dict:
+    """Build a balanced 20-question exam plan across all topic areas."""
+    plan = []
+    for topic, count in _EXAM_DISTRIBUTION:
+        subtopics = list(TOPICS[topic]["subtopics"].keys())
+        for i in range(count):
+            subtopic = subtopics[i % len(subtopics)]
+            q_type   = random.choice(QUESTION_TYPES_BY_TOPIC[topic])
+            plan.append({
+                "topic":      topic,
+                "subtopic":   subtopic,
+                "q_type":     q_type,
+                "difficulty": 2.5,  # standard B1 level for exam
+            })
+    random.shuffle(plan)
+    return {"active": True, "total": 20, "done": 0, "plan": plan, "results": []}
+
+
+# ── Core question / answer logic ──────────────────────────────────────────────
+
 async def _send_question(
     db: Database,
     user_id: int,
@@ -149,12 +201,9 @@ async def _send_question(
     forced_subtopic: Optional[str] = None,
     is_first: bool = False,
 ):
-    """Generate the next question and send it to the user."""
     performance = db.get_all_performance(user_id)
 
     if forced_topic and forced_subtopic:
-        from adaptive import QUESTION_TYPES_BY_TOPIC
-        import random
         topic    = forced_topic
         subtopic = forced_subtopic
         q_type   = random.choice(QUESTION_TYPES_BY_TOPIC[topic])
@@ -163,7 +212,6 @@ async def _send_question(
     else:
         topic, subtopic, q_type, difficulty = pick_next_params(performance)
 
-    # Give Gemini brief context to avoid immediately repeating the same question
     recent_ctx = None
     pending = db.get_pending_question(user_id)
     if pending:
@@ -197,6 +245,122 @@ async def _send_question(
     )
 
 
+async def _send_exam_question(
+    db: Database,
+    user_id: int,
+    chat_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+    exam_state: dict,
+):
+    done  = exam_state["done"]
+    total = exam_state["total"]
+    plan  = exam_state["plan"]
+
+    if done >= total:
+        await _send_exam_summary(db, user_id, chat_id, context, exam_state)
+        return
+
+    params     = plan[done]
+    topic      = params["topic"]
+    subtopic   = params["subtopic"]
+    q_type     = params["q_type"]
+    difficulty = params["difficulty"]
+    progress   = f"Question {done + 1} of {total}"
+
+    try:
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        question = await generate_question(topic, subtopic, q_type, difficulty, None)
+    except Exception as exc:
+        logger.error("exam generate_question failed: %s", exc)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ Couldn't generate question. Try /exam to restart.",
+        )
+        return
+
+    question["_exam_mode"] = True
+    db.set_pending_question(user_id, question)
+
+    text         = _fmt_question(question, is_first=True, progress=progress)
+    reply_markup = None
+    if question["question_type"] == "multiple_choice" and "options" in question:
+        reply_markup = _build_mc_keyboard(question["options"])
+        options_text = "\n".join(_esc(opt) for opt in question["options"])
+        text += f"\n\n{options_text}"
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=reply_markup,
+    )
+
+
+async def _send_exam_summary(
+    db: Database,
+    user_id: int,
+    chat_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+    exam_state: dict,
+):
+    results   = exam_state.get("results", [])
+    total     = len(results)
+    if total == 0:
+        await context.bot.send_message(chat_id=chat_id, text="No results to summarise.")
+        db.set_exam_state(user_id, None)
+        db.set_pending_question(user_id, None)
+        return
+
+    correct   = sum(1 for r in results if r["is_correct"])
+    avg_score = sum(r["score"] for r in results) / total
+
+    grade = (
+        "A" if avg_score >= 0.90 else
+        "B" if avg_score >= 0.75 else
+        "C" if avg_score >= 0.60 else
+        "D"
+    )
+
+    topic_stats: dict = {}
+    for r in results:
+        t = r["topic"]
+        if t not in topic_stats:
+            topic_stats[t] = {"correct": 0, "total": 0, "score": 0.0}
+        topic_stats[t]["total"]   += 1
+        topic_stats[t]["correct"] += int(r["is_correct"])
+        topic_stats[t]["score"]   += r["score"]
+
+    lines = [
+        "📝 <b>Exam Complete!</b>",
+        "",
+        f"Score: <b>{correct}/{total}</b>  ({round(avg_score * 100)}%)  Grade: <b>{grade}</b>",
+        "",
+        "<b>Topic breakdown:</b>",
+    ]
+    for topic, stats in topic_stats.items():
+        label   = _esc(TOPICS[topic]["label"])
+        t_score = round(stats["score"] / stats["total"] * 100)
+        lines.append(f"  • {label}: {stats['correct']}/{stats['total']} ({t_score}%)")
+
+    if avg_score >= 0.80:
+        lines += ["", "🎉 Excellent work! You're well prepared for TELC B1!"]
+    elif avg_score >= 0.60:
+        lines += ["", "👍 Good effort! Keep practicing your weak areas."]
+    else:
+        lines += ["", "💪 Keep going — regular practice will get you there!"]
+
+    lines += ["", "Type /next to continue, or /exam for another test."]
+
+    db.set_exam_state(user_id, None)
+    db.set_pending_question(user_id, None)
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="\n".join(lines),
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def _handle_answer(
     db: Database,
     user_id: int,
@@ -204,7 +368,6 @@ async def _handle_answer(
     user_answer: str,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    """Evaluate the user's answer, give feedback, then show action buttons."""
     pending = db.get_pending_question(user_id)
     if not pending:
         await _send_question(db, user_id, chat_id, context)
@@ -227,7 +390,6 @@ async def _handle_answer(
     feedback   = result.get("feedback", "")
     correction = result.get("correction", "")
 
-    # Emoji header
     if score >= 0.9:
         header = "✅ <b>Correct!</b>"
     elif score >= 0.5:
@@ -244,12 +406,44 @@ async def _handle_answer(
     if pending.get("explanation"):
         parts.append(f"💡 <i>{_esc(pending['explanation'])}</i>")
 
-    # Update DB
-    old_perf = db.get_topic_performance(user_id, pending["topic"], pending["subtopic"])
-    new_diff = adjust_difficulty(old_perf.get("difficulty", 2.0), is_correct)
-    db.update_performance(user_id, pending["topic"], pending["subtopic"], is_correct, score, new_diff)
+    # Update performance (SRS + difficulty)
+    old_perf    = db.get_topic_performance(user_id, pending["topic"], pending["subtopic"])
+    new_diff    = adjust_difficulty(old_perf.get("difficulty", 2.0), is_correct)
+    new_ri      = next_review_interval(old_perf.get("review_interval", 1.0), is_correct)
+    db.update_performance(
+        user_id, pending["topic"], pending["subtopic"],
+        is_correct, score, new_diff, new_ri,
+    )
 
-    # Keep pending question with answer context for "Explain More"
+    # Update streak (only in regular practice mode, not exam)
+    is_exam = pending.get("_exam_mode", False)
+    if not is_exam:
+        streak, is_new_day = db.update_streak(user_id)
+        if is_new_day:
+            milestone_msg = _STREAK_MILESTONES.get(streak)
+            if milestone_msg:
+                parts.append(milestone_msg)
+            elif streak > 1:
+                parts.append(f"🔥 <b>{streak}-day streak!</b>")
+
+    # Choose keyboard based on mode
+    if is_exam:
+        keyboard = _exam_keyboard()
+        # Update exam state
+        exam_state = db.get_exam_state(user_id)
+        if exam_state:
+            exam_state["done"] += 1
+            exam_state["results"].append({
+                "topic":      pending["topic"],
+                "subtopic":   pending["subtopic"],
+                "is_correct": is_correct,
+                "score":      score,
+            })
+            db.set_exam_state(user_id, exam_state)
+    else:
+        keyboard = _action_keyboard()
+
+    # Keep pending with answer context for "Explain More"
     pending["_answered"]      = True
     pending["_user_answer"]   = user_answer
     pending["_last_feedback"] = feedback + (f"\nCorrection: {correction}" if correction else "")
@@ -260,7 +454,7 @@ async def _handle_answer(
         chat_id=chat_id,
         text="\n\n".join(parts),
         parse_mode=ParseMode.HTML,
-        reply_markup=_action_keyboard(),
+        reply_markup=keyboard,
     )
 
 
@@ -270,6 +464,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db: Database = context.bot_data["db"]
     user = update.effective_user
     db.upsert_user(user.id, user.username or "", user.first_name or "")
+    db.set_exam_state(user.id, None)
 
     await update.message.reply_text(WELCOME_MSG, parse_mode=ParseMode.HTML)
     await _send_question(db, user.id, update.effective_chat.id, context, is_first=True)
@@ -279,10 +474,28 @@ async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db: Database = context.bot_data["db"]
     user = update.effective_user
     db.upsert_user(user.id, user.username or "", user.first_name or "")
-
-    # If there is a pending question, skip it (don't evaluate)
+    db.set_exam_state(user.id, None)
     db.set_pending_question(user.id, None)
     await _send_question(db, user.id, update.effective_chat.id, context, is_first=True)
+
+
+async def cmd_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db: Database = context.bot_data["db"]
+    user = update.effective_user
+    db.upsert_user(user.id, user.username or "", user.first_name or "")
+
+    exam_state = _build_exam_plan()
+    db.set_exam_state(user.id, exam_state)
+    db.set_pending_question(user.id, None)
+
+    await update.message.reply_text(
+        "📝 <b>Exam Mode</b> — 20 questions\n\n"
+        "This simulates a TELC B1 practice test across all topic areas. "
+        "No explanations during the exam — focus and answer!\n\n"
+        "Good luck! Viel Erfolg! 🍀",
+        parse_mode=ParseMode.HTML,
+    )
+    await _send_exam_question(db, user.id, update.effective_chat.id, context, exam_state)
 
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -296,14 +509,21 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    streak = s.get("streak", 0)
+    streak_line = f"🔥 Current streak: <b>{streak} day{'s' if streak != 1 else ''}</b>" if streak > 0 else ""
+
     lines = [
         "📊 <b>Your Progress</b>",
         "",
         f"Questions answered: <b>{s['total_questions']}</b>",
         f"Correct: <b>{s['total_correct']}</b>  |  Wrong: <b>{s['total_incorrect']}</b>",
         f"Accuracy: <b>{s['accuracy']}%</b>  |  Avg score: <b>{s['avg_score']}%</b>",
+    ]
+    if streak_line:
+        lines.append(streak_line)
+    lines += [
         "",
-        "<i>Accuracy counts fully correct answers only. Avg score includes partial credit.</i>",
+        "<i>Accuracy = fully correct answers. Avg score includes partial credit.</i>",
         "",
     ]
 
@@ -337,7 +557,7 @@ async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    topic_arg = args[0].lower()
+    topic_arg    = args[0].lower()
     subtopic_arg = args[1].lower() if len(args) > 1 else None
 
     if topic_arg not in TOPICS:
@@ -356,13 +576,13 @@ async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if subtopic_arg is None:
-        import random
         subtopic_arg = random.choice(list(TOPICS[topic_arg]["subtopics"].keys()))
 
     await update.message.reply_text(
         f"Focusing on <b>{_esc(topic_arg)}</b> › <i>{_esc(subtopic_arg)}</i>",
         parse_mode=ParseMode.HTML,
     )
+    db.set_exam_state(update.effective_user.id, None)
     db.set_pending_question(update.effective_user.id, None)
     await _send_question(
         db,
@@ -407,7 +627,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     db.upsert_user(user.id, user.username or "", user.first_name or "")
 
-    data = query.data  # e.g. "answer:A", "explain", "next_q"
+    data = query.data
 
     if data.startswith("answer:"):
         user_answer = data.split(":", 1)[1]
@@ -415,9 +635,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
             pass
-        await _handle_answer(
-            db, user.id, query.message.chat_id, user_answer, context
-        )
+        await _handle_answer(db, user.id, query.message.chat_id, user_answer, context)
 
     elif data == "next_q":
         try:
@@ -426,6 +644,23 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         db.set_pending_question(user.id, None)
         await _send_question(db, user.id, query.message.chat_id, context, is_first=True)
+
+    elif data == "exam_next":
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        exam_state = db.get_exam_state(user.id)
+        if not exam_state or not exam_state.get("active"):
+            # Exam somehow lost state — fall back to normal practice
+            db.set_pending_question(user.id, None)
+            await _send_question(db, user.id, query.message.chat_id, context, is_first=True)
+            return
+        db.set_pending_question(user.id, None)
+        if exam_state["done"] >= exam_state["total"]:
+            await _send_exam_summary(db, user.id, query.message.chat_id, context, exam_state)
+        else:
+            await _send_exam_question(db, user.id, query.message.chat_id, context, exam_state)
 
     elif data == "explain":
         pending = db.get_pending_question(user.id)
@@ -454,7 +689,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         pending["_explain_depth"] = depth + 1
-        pending["_last_feedback"] = explanation[:500]  # keep context trimmed
+        pending["_last_feedback"] = explanation[:500]
         db.set_pending_question(user.id, pending)
         await context.bot.send_message(
             chat_id=query.message.chat_id,
@@ -475,6 +710,7 @@ def main():
 
     app.add_handler(CommandHandler("start",  cmd_start))
     app.add_handler(CommandHandler("next",   cmd_next))
+    app.add_handler(CommandHandler("exam",   cmd_exam))
     app.add_handler(CommandHandler("stats",  cmd_stats))
     app.add_handler(CommandHandler("topic",  cmd_topic))
     app.add_handler(CommandHandler("help",   cmd_help))
