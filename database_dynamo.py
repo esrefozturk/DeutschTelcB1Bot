@@ -190,6 +190,34 @@ class DynamoDatabase:
         item = resp.get("Item")
         return _int(item.get("questions_sent", 0)) if item else 0
 
+    def get_recent_questions(self, user_id: int) -> list:
+        resp = self._sessions.get_item(
+            Key={"user_id": str(user_id)},
+            ProjectionExpression="recent_questions",
+        )
+        item = resp.get("Item")
+        if not item or not item.get("recent_questions"):
+            return []
+        raw = item["recent_questions"]
+        try:
+            return json.loads(raw) if isinstance(raw, str) else list(raw)
+        except Exception:
+            return []
+
+    def add_recent_question(self, user_id: int, question_text: str, max_size: int = 25):
+        snippet = question_text[:100].strip()
+        recent  = self.get_recent_questions(user_id)
+        if snippet not in recent:
+            recent.append(snippet)
+        if len(recent) > max_size:
+            recent = recent[-max_size:]
+        payload = json.dumps(recent)
+        self._sessions.update_item(
+            Key={"user_id": str(user_id)},
+            UpdateExpression="SET recent_questions = :rq",
+            ExpressionAttributeValues={":rq": payload},
+        )
+
     # ── Performance ─────────────────────────────────────────────────────
 
     def get_all_performance(self, user_id: int) -> List[Dict]:

@@ -43,7 +43,7 @@ from adaptive import (
     pick_next_params,
 )
 from database import Database
-from gemini_client import GeminiQuotaExceeded, evaluate_answer, explain_further, generate_question, get_hint, init_gemini
+from gemini_client import GeminiQuotaExceeded, evaluate_answer, evaluate_voice_answer, explain_further, generate_question, get_hint, init_gemini
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -85,6 +85,7 @@ HELP_MSG = (
     "<b>Answering</b>\n"
     "• For multiple-choice questions tap a button OR type A / B / C / D.\n"
     "• For all other types just type your answer freely.\n"
+    "• You can also send a <b>voice message</b> 🎤 — it will be transcribed and evaluated.\n"
     "• Minor spelling mistakes are OK; grammar concepts are graded strictly."
 )
 
@@ -229,9 +230,11 @@ async def _send_question(
     if pending:
         recent_ctx = f"{pending.get('topic')}/{pending.get('subtopic')}"
 
+    avoided = db.get_recent_questions(user_id)
+
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        question = await generate_question(topic, subtopic, q_type, difficulty, recent_ctx)
+        question = await generate_question(topic, subtopic, q_type, difficulty, recent_ctx, avoided or None)
     except GeminiQuotaExceeded:
         await context.bot.send_message(
             chat_id=chat_id,
@@ -263,6 +266,7 @@ async def _send_question(
     if reply_markup:
         question["_question_msg_id"] = msg.message_id
     db.set_pending_question(user_id, question, count=True)
+    db.add_recent_question(user_id, question.get("question", ""))
 
 
 async def _send_exam_question(
@@ -287,9 +291,11 @@ async def _send_exam_question(
     difficulty = params["difficulty"]
     progress   = f"Question {done + 1} of {total}"
 
+    avoided = db.get_recent_questions(user_id)
+
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        question = await generate_question(topic, subtopic, q_type, difficulty, None)
+        question = await generate_question(topic, subtopic, q_type, difficulty, None, avoided or None)
     except GeminiQuotaExceeded:
         await context.bot.send_message(
             chat_id=chat_id,
@@ -321,6 +327,7 @@ async def _send_exam_question(
         reply_markup=reply_markup,
     )
     db.set_pending_question(user_id, question, count=True)
+    db.add_recent_question(user_id, question.get("question", ""))
 
 
 async def _send_exam_summary(
@@ -663,6 +670,136 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _handle_answer(db, user.id, update.effective_chat.id, user_text, context)
 
 
+# ── Voice message handler ──────────────────────────────────────────────────────
+
+async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db: Database = context.bot_data["db"]
+    user = update.effective_user
+    db.upsert_user(user.id, user.username or "", user.first_name or "")
+
+    pending = db.get_pending_question(user.id)
+    if not pending:
+        await _send_question(db, user.id, update.effective_chat.id, context)
+        return
+
+    if pending.get("_answered"):
+        await update.message.reply_text(
+            "Use the buttons above — <b>💡 Explain More</b> or <b>➡️ Next Question</b>.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # Download the voice file from Telegram
+    voice = update.message.voice
+    try:
+        file = await context.bot.get_file(voice.file_id)
+        audio_bytes = await file.download_as_bytearray()
+    except Exception as exc:
+        logger.error("Failed to download voice file: %s", exc)
+        await update.message.reply_text("⚠️ Couldn't download your voice message. Please try typing your answer.")
+        return
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+    try:
+        result = await evaluate_voice_answer(pending, bytes(audio_bytes), mime_type="audio/ogg")
+    except GeminiQuotaExceeded:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC. Try again then!",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    except Exception as exc:
+        logger.error("evaluate_voice_answer failed: %s", exc)
+        await update.message.reply_text("⚠️ Couldn't process your voice message. Please try typing your answer.")
+        return
+
+    transcription = result.get("transcription", "")
+    if transcription:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"🎤 <i>You said:</i> \"{_esc(transcription)}\"",
+            parse_mode=ParseMode.HTML,
+        )
+
+    # Re-use _handle_answer logic with the transcription as the user_answer,
+    # but the evaluation is already done — inject result directly.
+    is_correct = result.get("is_correct", False)
+    score      = result.get("score", 0.0)
+    feedback   = result.get("feedback", "")
+    correction = result.get("correction", "")
+
+    if score >= 0.9:
+        header = "✅ <b>Correct!</b>"
+    elif score >= 0.5:
+        header = "🟡 <b>Partially correct</b>"
+    else:
+        header = "❌ <b>Not quite</b>"
+
+    parts = [header]
+    if feedback:
+        parts.append(_esc(feedback))
+    if correction:
+        parts.append(f"<b>Correction:</b> {_esc(correction)}")
+    parts.append(f"<b>Correct answer:</b> <code>{_esc(pending.get('correct_answer', ''))}</code>")
+    if pending.get("explanation"):
+        parts.append(f"💡 <i>{_esc(pending['explanation'])}</i>")
+
+    old_perf = db.get_topic_performance(user.id, pending["topic"], pending["subtopic"])
+    from adaptive import adjust_difficulty, next_review_interval
+    new_diff = adjust_difficulty(old_perf.get("difficulty", 2.0), is_correct)
+    new_ri   = next_review_interval(old_perf.get("review_interval", 1.0), is_correct)
+    db.update_performance(user.id, pending["topic"], pending["subtopic"], is_correct, score, new_diff, new_ri)
+
+    is_exam = pending.get("_exam_mode", False)
+    if not is_exam:
+        streak, is_new_day = db.update_streak(user.id)
+        if is_new_day:
+            milestone_msg = _STREAK_MILESTONES.get(streak)
+            if milestone_msg:
+                parts.append(milestone_msg)
+            elif streak > 1:
+                parts.append(f"🔥 <b>{streak}-day streak!</b>")
+
+    msg_id = pending.get("_question_msg_id")
+    if msg_id:
+        try:
+            await context.bot.edit_message_reply_markup(
+                chat_id=update.effective_chat.id, message_id=msg_id, reply_markup=None
+            )
+        except Exception:
+            pass
+
+    if is_exam:
+        keyboard = _exam_keyboard()
+        exam_state = db.get_exam_state(user.id)
+        if exam_state:
+            exam_state["done"] += 1
+            exam_state["results"].append({
+                "topic":      pending["topic"],
+                "subtopic":   pending["subtopic"],
+                "is_correct": is_correct,
+                "score":      score,
+            })
+            db.set_exam_state(user.id, exam_state)
+    else:
+        keyboard = _action_keyboard()
+
+    pending["_answered"]      = True
+    pending["_user_answer"]   = transcription
+    pending["_last_feedback"] = feedback + (f"\nCorrection: {correction}" if correction else "")
+    pending["_explain_depth"] = 0
+    db.set_pending_question(user.id, pending)
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="\n\n".join(parts),
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard,
+    )
+
+
 # ── Callback handler (inline keyboard answers) ────────────────────────────────
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -715,19 +852,24 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         hint_count = pending.get("_hint_count", 0)
         if hint_count >= _MAX_HINTS:
             return
-        try:
-            await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
-            hint_text = await get_hint(pending, hint_count)
-        except GeminiQuotaExceeded:
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC.",
-                parse_mode=ParseMode.HTML,
-            )
-            return
-        except Exception as exc:
-            logger.error("get_hint failed: %s", exc)
-            return
+        # Use pre-bundled hints from the question JSON first (no Gemini call needed).
+        # Fall back to a live Gemini call for backward compat with older pending questions.
+        bundled_key = f"hint_{hint_count + 1}"
+        hint_text   = pending.get(bundled_key)
+        if not hint_text:
+            try:
+                await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+                hint_text = await get_hint(pending, hint_count)
+            except GeminiQuotaExceeded:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC.",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            except Exception as exc:
+                logger.error("get_hint failed: %s", exc)
+                return
         pending["_hint_count"] = hint_count + 1
         db.set_pending_question(user.id, pending)
         # Update the question keyboard: advance hint count (may remove button if at max)
@@ -795,6 +937,7 @@ def main():
     app.add_handler(CommandHandler("topic",  cmd_topic))
     app.add_handler(CommandHandler("help",   cmd_help))
     app.add_handler(CallbackQueryHandler(on_callback))
+    app.add_handler(MessageHandler(filters.VOICE, on_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 
     logger.info("Bot is running…")

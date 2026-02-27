@@ -57,6 +57,8 @@ _QUESTION_SCHEMA = """
   "options":       ["A) ...", "B) ...", "C) ...", "D) ..."],
   "correct_answer": "<the exact correct answer or the letter A/B/C/D for multiple choice>",
   "explanation":   "<1-2 sentences explaining the rule or meaning in English>",
+  "hint_1":        "<a gentle first hint that nudges the learner without revealing the answer>",
+  "hint_2":        "<a stronger second hint, more specific but still not giving the answer away>",
   "topic":         "<topic string>",
   "subtopic":      "<subtopic string>",
   "difficulty":    <number 1-5>
@@ -70,6 +72,7 @@ def _build_question_prompt(
     question_type: str,
     difficulty: float,
     context: Optional[str],
+    avoided_questions: Optional[List[str]] = None,
 ) -> str:
     diff_label    = difficulty_label(difficulty)
     subtopic_desc = get_subtopic_description(topic, subtopic)
@@ -110,13 +113,18 @@ def _build_question_prompt(
     instruction   = type_instructions.get(question_type, "Create a question.")
     context_block = f"\n\nAvoid repeating these recently asked topics: {context}" if context else ""
 
+    avoided_block = ""
+    if avoided_questions:
+        avoided_list = "\n".join(f"  - {q}" for q in avoided_questions[:25])
+        avoided_block = f"\n\nDo NOT create a question identical or very similar to any of these recently asked questions:\n{avoided_list}"
+
     return f"""You are an expert German language teacher preparing a student for the TELC B1 exam.
 
 Task: Generate ONE question.
   • Topic: {topic} — {subtopic} ({subtopic_desc})
   • Question type: {question_type}
   • Difficulty level: {difficulty:.1f}/5 ({diff_label})
-  • Target exam: TELC B1 (Common European Framework B1){context_block}
+  • Target exam: TELC B1 (Common European Framework B1){context_block}{avoided_block}
 
 Instructions for this question type:
 {instruction}
@@ -127,6 +135,7 @@ Important rules:
 - At difficulty 3: use standard B1 vocabulary and grammar.
 - At difficulty 4-5: use less common vocabulary, complex sentence structures.
 - The explanation must be in ENGLISH and genuinely teach the rule.
+- hint_1 must gently nudge without revealing the answer; hint_2 can be more specific but must NOT state the answer.
 - Return ONLY the JSON object below — no markdown fences, no extra text.
 
 Required JSON schema:
@@ -252,8 +261,9 @@ async def generate_question(
     question_type: str,
     difficulty: float,
     recent_context: Optional[str] = None,
+    avoided_questions: Optional[List[str]] = None,
 ) -> Dict:
-    prompt = _build_question_prompt(topic, subtopic, question_type, difficulty, recent_context)
+    prompt = _build_question_prompt(topic, subtopic, question_type, difficulty, recent_context, avoided_questions)
     text   = await _call_with_fallback(prompt)
     data   = _extract_json(text)
     # Always force topic/subtopic to our chosen values — Gemini sometimes echoes
@@ -388,3 +398,104 @@ async def explain_further(
     prompt = _build_explain_prompt(question_data, user_answer, previous_feedback, depth)
     text   = await _call_with_fallback(prompt, config=_text_gen_config())
     return text.strip()
+
+
+# ── Voice evaluation ──────────────────────────────────────────────────────────
+
+_VOICE_EVAL_SCHEMA = """
+{
+  "transcription": "<exact text of what the learner said>",
+  "is_correct":    <true | false>,
+  "score":         <0.0 – 1.0>,
+  "feedback":      "<encouraging, constructive feedback in English — 1-3 sentences>",
+  "correction":    "<corrected answer with brief explanation, only include if is_correct is false>"
+}
+""".strip()
+
+
+def _build_voice_eval_prompt(question_data: Dict) -> str:
+    q_type = question_data.get("question_type", "")
+    options_block = ""
+    if q_type == "multiple_choice" and "options" in question_data:
+        options_block = "\nOptions were:\n" + "\n".join(question_data["options"])
+
+    leniency = (
+        "Be strict about the grammar concept being tested but lenient on minor pronunciation "
+        "variations. For translations accept paraphrases if the meaning is correct. "
+        "For multiple-choice, accept the letter (A/B/C/D) OR the spoken text of the option."
+    )
+    if q_type in ("translation_to_german", "translation_to_english", "short_answer"):
+        leniency = (
+            "Accept any spoken answer that conveys the correct meaning. "
+            "Be encouraging and highlight what was good even in partial answers."
+        )
+
+    return f"""You are a German language teacher evaluating a TELC B1 learner's SPOKEN answer.
+
+The audio attached is the learner's voice message response to this question.
+
+Question ({q_type}):
+{question_data.get('question', '')}
+{options_block}
+
+Expected correct answer: {question_data.get('correct_answer', '')}
+
+Your tasks:
+1. Transcribe exactly what the learner said in the audio.
+2. Evaluate whether it answers the question correctly.
+
+Evaluation rules:
+- {leniency}
+- score: 1.0 = fully correct, 0.5 = partially correct (right idea, wrong form), 0.0 = wrong.
+- is_correct should be true if score >= 0.7.
+- feedback must be warm and pedagogically useful.
+- correction: include ONLY if is_correct is false; show the correct answer with English explanation.
+
+Return ONLY the JSON object below — no markdown fences, no extra text.
+
+Required JSON schema:
+{_VOICE_EVAL_SCHEMA}
+"""
+
+
+async def evaluate_voice_answer(
+    question_data: Dict,
+    audio_bytes: bytes,
+    mime_type: str = "audio/ogg",
+) -> Dict:
+    """Transcribe a voice message and evaluate it against the pending question."""
+    client = _client_or_raise()
+    prompt_text = _build_voice_eval_prompt(question_data)
+
+    contents = [
+        types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
+        types.Part.from_text(text=prompt_text),
+    ]
+
+    last_exc: Optional[Exception] = None
+    for model in MODELS:
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda m=model: client.models.generate_content(
+                    model=m,
+                    contents=contents,
+                    config=_gen_config(),
+                ),
+            )
+            if model != MODELS[0]:
+                logger.info("Voice eval fell back to model: %s", model)
+            data = _extract_json(response.text)
+            data.setdefault("transcription", "")
+            data.setdefault("is_correct", False)
+            data.setdefault("score", 0.0)
+            data.setdefault("feedback", "")
+            return data
+        except Exception as exc:
+            if _is_quota_error(exc):
+                logger.warning("Quota exhausted on %s (voice eval), trying next model.", model)
+                last_exc = exc
+                continue
+            raise
+    raise GeminiQuotaExceeded("All models exhausted their daily quota.") from last_exc
