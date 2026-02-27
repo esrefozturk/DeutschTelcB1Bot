@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
 
+# Only one deploy can run at a time. If a new push comes in while a deploy
+# is in progress, the in-progress run is cancelled and the new one starts,
+# ensuring the latest code is always what ends up deployed.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
 jobs:
   deploy:
     name: SAM build & deploy
