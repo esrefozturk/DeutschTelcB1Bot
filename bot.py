@@ -43,7 +43,7 @@ from adaptive import (
     pick_next_params,
 )
 from database import Database
-from gemini_client import evaluate_answer, explain_further, generate_question, init_gemini
+from gemini_client import GeminiQuotaExceeded, evaluate_answer, explain_further, generate_question, get_hint, init_gemini
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -118,12 +118,24 @@ def _difficulty_stars(d: float) -> str:
     return "★" * filled + "☆" * (5 - filled)
 
 
-def _build_mc_keyboard(options: list[str]) -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(opt, callback_data=f"answer:{opt[0]}")]
-        for opt in options
-    ]
-    return InlineKeyboardMarkup(buttons)
+_MAX_HINTS = 2
+
+
+def _question_keyboard(question: dict, hint_count: int = 0) -> Optional[InlineKeyboardMarkup]:
+    """
+    Keyboard attached to a question before the user answers.
+    - Multiple-choice: one button per option + hint button below.
+    - All other types: just the hint button.
+    No hint button in exam mode (caller passes hint_count=_MAX_HINTS to suppress it).
+    """
+    rows = []
+    if question["question_type"] == "multiple_choice" and "options" in question:
+        for opt in question["options"]:
+            rows.append([InlineKeyboardButton(opt, callback_data=f"answer:{opt[0]}")])
+    if hint_count < _MAX_HINTS:
+        label = "🔍 Get Hint" if hint_count == 0 else "🔍 Another Hint"
+        rows.append([InlineKeyboardButton(label, callback_data="hint")])
+    return InlineKeyboardMarkup(rows) if rows else None
 
 
 def _action_keyboard() -> InlineKeyboardMarkup:
@@ -220,6 +232,13 @@ async def _send_question(
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         question = await generate_question(topic, subtopic, q_type, difficulty, recent_ctx)
+    except GeminiQuotaExceeded:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC. Try again then!",
+            parse_mode=ParseMode.HTML,
+        )
+        return
     except Exception as exc:
         logger.error("generate_question failed: %s", exc)
         await context.bot.send_message(
@@ -228,21 +247,22 @@ async def _send_question(
         )
         return
 
-    db.set_pending_question(user_id, question)
-
     text         = _fmt_question(question, is_first=is_first)
-    reply_markup = None
+    reply_markup = _question_keyboard(question)  # MC buttons + hint
     if question["question_type"] == "multiple_choice" and "options" in question:
-        reply_markup = _build_mc_keyboard(question["options"])
         options_text = "\n".join(_esc(opt) for opt in question["options"])
         text += f"\n\n{options_text}"
 
-    await context.bot.send_message(
+    msg = await context.bot.send_message(
         chat_id=chat_id,
         text=text,
         parse_mode=ParseMode.HTML,
         reply_markup=reply_markup,
     )
+    # Store message_id so _handle_answer can remove the hint button after a text answer.
+    if reply_markup:
+        question["_question_msg_id"] = msg.message_id
+    db.set_pending_question(user_id, question, count=True)
 
 
 async def _send_exam_question(
@@ -270,6 +290,13 @@ async def _send_exam_question(
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         question = await generate_question(topic, subtopic, q_type, difficulty, None)
+    except GeminiQuotaExceeded:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC. Try again then!",
+            parse_mode=ParseMode.HTML,
+        )
+        return
     except Exception as exc:
         logger.error("exam generate_question failed: %s", exc)
         await context.bot.send_message(
@@ -279,12 +306,11 @@ async def _send_exam_question(
         return
 
     question["_exam_mode"] = True
-    db.set_pending_question(user_id, question)
 
     text         = _fmt_question(question, is_first=True, progress=progress)
-    reply_markup = None
+    # Exam mode: MC buttons only, no hint button (_MAX_HINTS suppresses it)
+    reply_markup = _question_keyboard(question, hint_count=_MAX_HINTS)
     if question["question_type"] == "multiple_choice" and "options" in question:
-        reply_markup = _build_mc_keyboard(question["options"])
         options_text = "\n".join(_esc(opt) for opt in question["options"])
         text += f"\n\n{options_text}"
 
@@ -294,6 +320,7 @@ async def _send_exam_question(
         parse_mode=ParseMode.HTML,
         reply_markup=reply_markup,
     )
+    db.set_pending_question(user_id, question, count=True)
 
 
 async def _send_exam_summary(
@@ -376,6 +403,13 @@ async def _handle_answer(
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         result = await evaluate_answer(pending, user_answer)
+    except GeminiQuotaExceeded:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC. Try again then!",
+            parse_mode=ParseMode.HTML,
+        )
+        return
     except Exception as exc:
         logger.error("evaluate_answer failed: %s", exc)
         await context.bot.send_message(
@@ -425,6 +459,18 @@ async def _handle_answer(
                 parts.append(milestone_msg)
             elif streak > 1:
                 parts.append(f"🔥 <b>{streak}-day streak!</b>")
+
+    # Remove the hint button (or MC buttons) from the question message when the
+    # user answers by typing — button-based MC answers already handle this via
+    # edit_message_reply_markup in on_callback, so failures here are silently ignored.
+    msg_id = pending.get("_question_msg_id")
+    if msg_id:
+        try:
+            await context.bot.edit_message_reply_markup(
+                chat_id=chat_id, message_id=msg_id, reply_markup=None
+            )
+        except Exception:
+            pass
 
     # Choose keyboard based on mode
     if is_exam:
@@ -661,6 +707,40 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _send_exam_summary(db, user.id, query.message.chat_id, context, exam_state)
         else:
             await _send_exam_question(db, user.id, query.message.chat_id, context, exam_state)
+
+    elif data == "hint":
+        pending = db.get_pending_question(user.id)
+        if not pending or pending.get("_answered") or pending.get("_exam_mode"):
+            return
+        hint_count = pending.get("_hint_count", 0)
+        if hint_count >= _MAX_HINTS:
+            return
+        try:
+            await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+            hint_text = await get_hint(pending, hint_count)
+        except GeminiQuotaExceeded:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        except Exception as exc:
+            logger.error("get_hint failed: %s", exc)
+            return
+        pending["_hint_count"] = hint_count + 1
+        db.set_pending_question(user.id, pending)
+        # Update the question keyboard: advance hint count (may remove button if at max)
+        new_kb = _question_keyboard(pending, hint_count + 1)
+        try:
+            await query.edit_message_reply_markup(reply_markup=new_kb)
+        except Exception:
+            pass
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=f"🔍 <b>Hint:</b> {_esc(hint_text)}",
+            parse_mode=ParseMode.HTML,
+        )
 
     elif data == "explain":
         pending = db.get_pending_question(user.id)

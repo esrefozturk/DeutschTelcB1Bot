@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 
@@ -95,8 +95,9 @@ class Database:
         Update daily streak. Returns (new_streak, is_new_day).
         is_new_day is True when this is the first answer of a calendar day.
         """
-        today     = date.today().isoformat()
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        _today    = datetime.now(timezone.utc).date()
+        today     = _today.isoformat()
+        yesterday = (_today - timedelta(days=1)).isoformat()
 
         with self._conn() as conn:
             row = conn.execute(
@@ -131,7 +132,7 @@ class Database:
                 return json.loads(row["pending_question"])
             return None
 
-    def set_pending_question(self, user_id: int, question: Optional[Dict]):
+    def set_pending_question(self, user_id: int, question: Optional[Dict], count: bool = False):
         payload = json.dumps(question) if question else None
         with self._conn() as conn:
             conn.execute(
@@ -139,10 +140,10 @@ class Database:
                 INSERT INTO sessions (user_id, pending_question, updated_at)
                 VALUES (?, ?, datetime('now'))
                 ON CONFLICT(user_id) DO UPDATE SET pending_question=excluded.pending_question,
-                                                   questions_sent=questions_sent + 1,
+                                                   questions_sent=questions_sent + (CASE WHEN ? THEN 1 ELSE 0 END),
                                                    updated_at=excluded.updated_at
                 """,
-                (user_id, payload),
+                (user_id, payload, int(bool(count and question))),
             )
 
     def get_exam_state(self, user_id: int) -> Optional[Dict]:

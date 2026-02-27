@@ -206,6 +206,10 @@ def _text_gen_config() -> types.GenerateContentConfig:
     return types.GenerateContentConfig(temperature=0.7)
 
 
+class GeminiQuotaExceeded(Exception):
+    """Raised when all models in the fallback chain have hit their daily quota."""
+
+
 def _is_quota_error(exc: Exception) -> bool:
     msg = str(exc)
     return "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower()
@@ -237,7 +241,7 @@ async def _call_with_fallback(prompt: str, config: Optional[types.GenerateConten
                 last_exc = exc
                 continue
             raise  # non-quota errors bubble up immediately
-    raise last_exc  # all models exhausted
+    raise GeminiQuotaExceeded("All models exhausted their daily quota.") from last_exc
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -258,6 +262,25 @@ async def generate_question(
     data["topic"]    = topic
     data["subtopic"] = subtopic
     data.setdefault("difficulty", difficulty)
+
+    # Fix: for non-MC question types, Gemini occasionally generates options AND
+    # sets correct_answer to a letter ("A"/"B"/…) instead of the actual answer
+    # text.  Resolve the letter to the full option text when this happens.
+    if (
+        data.get("question_type") != "multiple_choice"
+        and isinstance(data.get("correct_answer"), str)
+        and data["correct_answer"].strip().upper() in ("A", "B", "C", "D")
+        and data.get("options")
+    ):
+        letter = data["correct_answer"].strip().upper()
+        idx    = ord(letter) - ord("A")
+        opts   = data["options"]
+        if 0 <= idx < len(opts):
+            opt = opts[idx]
+            if len(opt) > 2 and opt[1] in ") .":  # strip "A) " / "A. " prefix
+                opt = opt[2:].strip()
+            data["correct_answer"] = opt
+
     return data
 
 
@@ -310,6 +333,50 @@ Keep your explanation friendly, clear, and mostly in English. Bold German words/
 Format nicely with line breaks. Keep it to 4-6 short paragraphs maximum.
 Do NOT return JSON — just plain prose with markdown formatting.
 """
+
+
+def _build_hint_prompt(question_data: Dict, hint_count: int) -> str:
+    q_type = question_data.get("question_type", "")
+    options_block = ""
+    if q_type == "multiple_choice" and "options" in question_data:
+        options_block = "\nOptions:\n" + "\n".join(question_data["options"])
+
+    depth = (
+        "Give a gentle first hint — nudge the learner without revealing the answer."
+        if hint_count == 0
+        else "Give a stronger second hint — more specific, but still don't reveal the answer directly."
+    )
+    type_guidance = {
+        "multiple_choice":        "Help eliminate one or two wrong options with a brief reason.",
+        "fill_blank":             "Hint at the grammar rule or word form needed (e.g. 'Think about which case this preposition takes').",
+        "translation_to_german":  "Hint at a key word or grammatical structure needed in German.",
+        "translation_to_english": "Hint at the meaning of a key German word or phrase in the sentence.",
+        "error_correction":       "Point to which part of the sentence contains the error (e.g. beginning/middle/end, or which word type is wrong).",
+        "sentence_building":      "Suggest which word should come first, or name the grammatical rule that governs the word order.",
+        "short_answer":           "Point to which part of the text or scenario contains the answer.",
+    }.get(q_type, "Give a gentle directional hint.")
+
+    return f"""You are helping a German B1 learner who is stuck on a question.
+
+Question ({q_type}):
+{question_data.get('question', '')}{options_block}
+
+Correct answer (DO NOT reveal this): {question_data.get('correct_answer', '')}
+
+{depth}
+Type-specific guidance: {type_guidance}
+
+Rules:
+- Maximum 1-2 sentences
+- Do NOT state the answer or any direct part of it
+- Be warm and encouraging
+- Write in English
+"""
+
+
+async def get_hint(question_data: Dict, hint_count: int = 0) -> str:
+    prompt = _build_hint_prompt(question_data, hint_count)
+    return (await _call_with_fallback(prompt, config=_text_gen_config())).strip()
 
 
 async def explain_further(

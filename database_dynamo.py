@@ -92,8 +92,9 @@ class DynamoDatabase:
         Update daily streak. Returns (new_streak, is_new_day).
         is_new_day is True when this is the first answer of a calendar day.
         """
-        today     = date.today().isoformat()
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        _today    = datetime.now(timezone.utc).date()
+        today     = _today.isoformat()
+        yesterday = (_today - timedelta(days=1)).isoformat()
 
         resp = self._users.get_item(
             Key={"user_id": str(user_id)},
@@ -145,7 +146,7 @@ class DynamoDatabase:
         raw = item["pending_question"]
         return json.loads(raw) if isinstance(raw, str) else raw
 
-    def set_pending_question(self, user_id: int, question: Optional[Dict]):
+    def set_pending_question(self, user_id: int, question: Optional[Dict], count: bool = False):
         payload = json.dumps(question) if question is not None else None
         self._sessions.update_item(
             Key={"user_id": str(user_id)},
@@ -158,7 +159,7 @@ class DynamoDatabase:
                 ":q":    payload,
                 ":now":  _now(),
                 ":zero": 0,
-                ":inc":  1 if question is not None else 0,
+                ":inc":  1 if (question is not None and count) else 0,
             },
         )
 
