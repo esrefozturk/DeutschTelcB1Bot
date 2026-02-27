@@ -118,7 +118,9 @@ def _fmt_question(q: dict) -> str:
         f"Difficulty: {stars}  |  Type: {qtype_pretty}\n\n"
     )
 
-    body = q["question"]
+    # Replace blank marker with a visible monospace placeholder.
+    # Plain "___" gets swallowed by Telegram's Markdown italic parser.
+    body = q["question"].replace("___", "`______`")
 
     if q["question_type"] == "sentence_building":
         body += "\n\n_(Arrange the words into a correct German sentence.)_"
