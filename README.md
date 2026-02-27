@@ -1,6 +1,8 @@
-# DeutschTelcB1Bot
-
-Adaptive TELC B1 German exam preparation Telegram bot powered by Google Gemini AI.
+<div align="center">
+  <img src="logo.png" alt="DeutschTelcB1Bot" width="120">
+  <h1>DeutschTelcB1Bot</h1>
+  <p>Adaptive TELC B1 German exam preparation Telegram bot powered by Google Gemini AI.</p>
+</div>
 
 ## Features
 
