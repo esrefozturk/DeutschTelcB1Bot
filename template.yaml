@@ -63,31 +63,13 @@ Resources:
             Path: /webhook
             Method: POST
 
-        # Inactivity nudge: every 4 hours between 10:00-22:00 UTC
-        # Sends a message if user hasn't practiced in 12+ hours
-        InactivityCheck10:
+        # Inactivity nudge: every hour between 10:00-22:00 UTC
+        # Lambda checks if user's last activity was 4+ hours ago
+        InactivityCheck:
           Type: Schedule
           Properties:
-            Schedule: cron(0 10 * * ? *)
-            Description: "Inactivity nudge at 10:00 UTC"
-            Input: '{"reminder_type": "inactivity"}'
-        InactivityCheck14:
-          Type: Schedule
-          Properties:
-            Schedule: cron(0 14 * * ? *)
-            Description: "Inactivity nudge at 14:00 UTC"
-            Input: '{"reminder_type": "inactivity"}'
-        InactivityCheck18:
-          Type: Schedule
-          Properties:
-            Schedule: cron(0 18 * * ? *)
-            Description: "Inactivity nudge at 18:00 UTC"
-            Input: '{"reminder_type": "inactivity"}'
-        InactivityCheck22:
-          Type: Schedule
-          Properties:
-            Schedule: cron(0 22 * * ? *)
-            Description: "Inactivity nudge at 22:00 UTC"
+            Schedule: cron(0 10-22 * * ? *)
+            Description: "Hourly inactivity check (10:00-22:00 UTC)"
             Input: '{"reminder_type": "inactivity"}'
 
         # Weekly summary: every Sunday at 10:00 UTC

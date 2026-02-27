@@ -56,8 +56,8 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
 # How long without practice before we send a nudge, and how often we re-nudge
-INACTIVITY_HOURS   = 12
-REMINDER_COOLDOWN_HOURS = 24
+INACTIVITY_HOURS        = 4
+REMINDER_COOLDOWN_HOURS = 4
 
 # ── One-time cold-start initialization ───────────────────────────────────────
 
