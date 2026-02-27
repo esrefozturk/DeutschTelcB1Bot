@@ -395,6 +395,102 @@ async def _send_exam_summary(
     )
 
 
+async def _record_answer(
+    db: Database,
+    user_id: int,
+    chat_id: int,
+    pending: dict,
+    user_answer: str,
+    result: dict,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    """
+    Shared post-evaluation logic for both typed and voice answers.
+    Updates performance/SRS, streak, exam state, stores answer context,
+    and sends the feedback message with the appropriate action keyboard.
+    """
+    is_correct = result.get("is_correct", False)
+    score      = result.get("score", 0.0)
+    feedback   = result.get("feedback", "")
+    correction = result.get("correction", "")
+
+    if score >= 0.9:
+        header = "✅ <b>Correct!</b>"
+    elif score >= 0.5:
+        header = "🟡 <b>Partially correct</b>"
+    else:
+        header = "❌ <b>Not quite</b>"
+
+    parts = [header]
+    if feedback:
+        parts.append(_esc(feedback))
+    if correction:
+        parts.append(f"<b>Correction:</b> {_esc(correction)}")
+    parts.append(f"<b>Correct answer:</b> <code>{_esc(pending.get('correct_answer', ''))}</code>")
+    if pending.get("explanation"):
+        parts.append(f"💡 <i>{_esc(pending['explanation'])}</i>")
+
+    # Update performance (SRS + difficulty)
+    old_perf = db.get_topic_performance(user_id, pending["topic"], pending["subtopic"])
+    new_diff = adjust_difficulty(old_perf.get("difficulty", 2.0), is_correct)
+    new_ri   = next_review_interval(old_perf.get("review_interval", 1.0), is_correct)
+    db.update_performance(
+        user_id, pending["topic"], pending["subtopic"],
+        is_correct, score, new_diff, new_ri,
+    )
+
+    # Update streak (only in regular practice mode, not exam)
+    is_exam = pending.get("_exam_mode", False)
+    if not is_exam:
+        streak, is_new_day = db.update_streak(user_id)
+        if is_new_day:
+            milestone_msg = _STREAK_MILESTONES.get(streak)
+            if milestone_msg:
+                parts.append(milestone_msg)
+            elif streak > 1:
+                parts.append(f"🔥 <b>{streak}-day streak!</b>")
+
+    # Remove the hint/MC buttons from the question message (silently ignore failures).
+    msg_id = pending.get("_question_msg_id")
+    if msg_id:
+        try:
+            await context.bot.edit_message_reply_markup(
+                chat_id=chat_id, message_id=msg_id, reply_markup=None
+            )
+        except Exception:
+            pass
+
+    # Choose keyboard and update exam state if applicable
+    if is_exam:
+        keyboard   = _exam_keyboard()
+        exam_state = db.get_exam_state(user_id)
+        if exam_state:
+            exam_state["done"] += 1
+            exam_state["results"].append({
+                "topic":      pending["topic"],
+                "subtopic":   pending["subtopic"],
+                "is_correct": is_correct,
+                "score":      score,
+            })
+            db.set_exam_state(user_id, exam_state)
+    else:
+        keyboard = _action_keyboard()
+
+    # Keep pending with answer context for "Explain More"
+    pending["_answered"]      = True
+    pending["_user_answer"]   = user_answer
+    pending["_last_feedback"] = feedback + (f"\nCorrection: {correction}" if correction else "")
+    pending["_explain_depth"] = 0
+    db.set_pending_question(user_id, pending)
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="\n\n".join(parts),
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard,
+    )
+
+
 async def _handle_answer(
     db: Database,
     user_id: int,
@@ -426,89 +522,7 @@ async def _handle_answer(
         await _send_question(db, user_id, chat_id, context)
         return
 
-    is_correct = result.get("is_correct", False)
-    score      = result.get("score", 0.0)
-    feedback   = result.get("feedback", "")
-    correction = result.get("correction", "")
-
-    if score >= 0.9:
-        header = "✅ <b>Correct!</b>"
-    elif score >= 0.5:
-        header = "🟡 <b>Partially correct</b>"
-    else:
-        header = "❌ <b>Not quite</b>"
-
-    parts = [header]
-    if feedback:
-        parts.append(_esc(feedback))
-    if correction:
-        parts.append(f"<b>Correction:</b> {_esc(correction)}")
-    parts.append(f"<b>Correct answer:</b> <code>{_esc(pending.get('correct_answer', ''))}</code>")
-    if pending.get("explanation"):
-        parts.append(f"💡 <i>{_esc(pending['explanation'])}</i>")
-
-    # Update performance (SRS + difficulty)
-    old_perf    = db.get_topic_performance(user_id, pending["topic"], pending["subtopic"])
-    new_diff    = adjust_difficulty(old_perf.get("difficulty", 2.0), is_correct)
-    new_ri      = next_review_interval(old_perf.get("review_interval", 1.0), is_correct)
-    db.update_performance(
-        user_id, pending["topic"], pending["subtopic"],
-        is_correct, score, new_diff, new_ri,
-    )
-
-    # Update streak (only in regular practice mode, not exam)
-    is_exam = pending.get("_exam_mode", False)
-    if not is_exam:
-        streak, is_new_day = db.update_streak(user_id)
-        if is_new_day:
-            milestone_msg = _STREAK_MILESTONES.get(streak)
-            if milestone_msg:
-                parts.append(milestone_msg)
-            elif streak > 1:
-                parts.append(f"🔥 <b>{streak}-day streak!</b>")
-
-    # Remove the hint button (or MC buttons) from the question message when the
-    # user answers by typing — button-based MC answers already handle this via
-    # edit_message_reply_markup in on_callback, so failures here are silently ignored.
-    msg_id = pending.get("_question_msg_id")
-    if msg_id:
-        try:
-            await context.bot.edit_message_reply_markup(
-                chat_id=chat_id, message_id=msg_id, reply_markup=None
-            )
-        except Exception:
-            pass
-
-    # Choose keyboard based on mode
-    if is_exam:
-        keyboard = _exam_keyboard()
-        # Update exam state
-        exam_state = db.get_exam_state(user_id)
-        if exam_state:
-            exam_state["done"] += 1
-            exam_state["results"].append({
-                "topic":      pending["topic"],
-                "subtopic":   pending["subtopic"],
-                "is_correct": is_correct,
-                "score":      score,
-            })
-            db.set_exam_state(user_id, exam_state)
-    else:
-        keyboard = _action_keyboard()
-
-    # Keep pending with answer context for "Explain More"
-    pending["_answered"]      = True
-    pending["_user_answer"]   = user_answer
-    pending["_last_feedback"] = feedback + (f"\nCorrection: {correction}" if correction else "")
-    pending["_explain_depth"] = 0
-    db.set_pending_question(user_id, pending)
-
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text="\n\n".join(parts),
-        parse_mode=ParseMode.HTML,
-        reply_markup=keyboard,
-    )
+    await _record_answer(db, user_id, chat_id, pending, user_answer, result, context)
 
 
 # ── Command handlers ──────────────────────────────────────────────────────────
@@ -692,7 +706,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Download the voice file from Telegram
     voice = update.message.voice
     try:
-        file = await context.bot.get_file(voice.file_id)
+        file        = await context.bot.get_file(voice.file_id)
         audio_bytes = await file.download_as_bytearray()
     except Exception as exc:
         logger.error("Failed to download voice file: %s", exc)
@@ -723,81 +737,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
         )
 
-    # Re-use _handle_answer logic with the transcription as the user_answer,
-    # but the evaluation is already done — inject result directly.
-    is_correct = result.get("is_correct", False)
-    score      = result.get("score", 0.0)
-    feedback   = result.get("feedback", "")
-    correction = result.get("correction", "")
-
-    if score >= 0.9:
-        header = "✅ <b>Correct!</b>"
-    elif score >= 0.5:
-        header = "🟡 <b>Partially correct</b>"
-    else:
-        header = "❌ <b>Not quite</b>"
-
-    parts = [header]
-    if feedback:
-        parts.append(_esc(feedback))
-    if correction:
-        parts.append(f"<b>Correction:</b> {_esc(correction)}")
-    parts.append(f"<b>Correct answer:</b> <code>{_esc(pending.get('correct_answer', ''))}</code>")
-    if pending.get("explanation"):
-        parts.append(f"💡 <i>{_esc(pending['explanation'])}</i>")
-
-    old_perf = db.get_topic_performance(user.id, pending["topic"], pending["subtopic"])
-    from adaptive import adjust_difficulty, next_review_interval
-    new_diff = adjust_difficulty(old_perf.get("difficulty", 2.0), is_correct)
-    new_ri   = next_review_interval(old_perf.get("review_interval", 1.0), is_correct)
-    db.update_performance(user.id, pending["topic"], pending["subtopic"], is_correct, score, new_diff, new_ri)
-
-    is_exam = pending.get("_exam_mode", False)
-    if not is_exam:
-        streak, is_new_day = db.update_streak(user.id)
-        if is_new_day:
-            milestone_msg = _STREAK_MILESTONES.get(streak)
-            if milestone_msg:
-                parts.append(milestone_msg)
-            elif streak > 1:
-                parts.append(f"🔥 <b>{streak}-day streak!</b>")
-
-    msg_id = pending.get("_question_msg_id")
-    if msg_id:
-        try:
-            await context.bot.edit_message_reply_markup(
-                chat_id=update.effective_chat.id, message_id=msg_id, reply_markup=None
-            )
-        except Exception:
-            pass
-
-    if is_exam:
-        keyboard = _exam_keyboard()
-        exam_state = db.get_exam_state(user.id)
-        if exam_state:
-            exam_state["done"] += 1
-            exam_state["results"].append({
-                "topic":      pending["topic"],
-                "subtopic":   pending["subtopic"],
-                "is_correct": is_correct,
-                "score":      score,
-            })
-            db.set_exam_state(user.id, exam_state)
-    else:
-        keyboard = _action_keyboard()
-
-    pending["_answered"]      = True
-    pending["_user_answer"]   = transcription
-    pending["_last_feedback"] = feedback + (f"\nCorrection: {correction}" if correction else "")
-    pending["_explain_depth"] = 0
-    db.set_pending_question(user.id, pending)
-
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="\n\n".join(parts),
-        parse_mode=ParseMode.HTML,
-        reply_markup=keyboard,
-    )
+    await _record_answer(db, user.id, update.effective_chat.id, pending, transcription, result, context)
 
 
 # ── Callback handler (inline keyboard answers) ────────────────────────────────
