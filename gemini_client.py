@@ -1,5 +1,5 @@
 """
-Gemini API client.
+Gemini API client (uses the current google-genai SDK).
 
 Two public coroutines:
   generate_question(topic, subtopic, question_type, difficulty, context) -> dict
@@ -11,23 +11,25 @@ import re
 import asyncio
 from typing import Dict, Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from adaptive import get_subtopic_description, difficulty_label
 
+# Module-level client — initialised once by init_gemini()
+_client: Optional[genai.Client] = None
+MODEL = "gemini-1.5-flash"   # free tier: 15 RPM, 1 M tokens/day
+
 
 def init_gemini(api_key: str):
-    genai.configure(api_key=api_key)
+    global _client
+    _client = genai.Client(api_key=api_key)
 
 
-def _get_model():
-    return genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
-        generation_config=genai.GenerationConfig(
-            temperature=0.9,
-            response_mime_type="application/json",
-        ),
-    )
+def _client_or_raise() -> genai.Client:
+    if _client is None:
+        raise RuntimeError("Call init_gemini(api_key) before using gemini_client.")
+    return _client
 
 
 # ── Prompt builders ───────────────────────────────────────────────────────────
@@ -36,7 +38,7 @@ _QUESTION_SCHEMA = """
 {
   "question":      "<the question text, in German or English as appropriate>",
   "question_type": "<one of: multiple_choice | fill_blank | translation_to_german | translation_to_english | error_correction | sentence_building | short_answer>",
-  "options":       ["A) ...", "B) ...", "C) ...", "D) ..."],   // ONLY for multiple_choice, omit otherwise
+  "options":       ["A) ...", "B) ...", "C) ...", "D) ..."],
   "correct_answer": "<the exact correct answer or the letter A/B/C/D for multiple choice>",
   "explanation":   "<1-2 sentences explaining the rule or meaning in English>",
   "topic":         "<topic string>",
@@ -53,7 +55,7 @@ def _build_question_prompt(
     difficulty: float,
     context: Optional[str],
 ) -> str:
-    diff_label = difficulty_label(difficulty)
+    diff_label    = difficulty_label(difficulty)
     subtopic_desc = get_subtopic_description(topic, subtopic)
 
     type_instructions = {
@@ -89,11 +91,8 @@ def _build_question_prompt(
         ),
     }
 
-    instruction = type_instructions.get(question_type, "Create a question.")
-
-    context_block = ""
-    if context:
-        context_block = f"\n\nAvoid repeating these recently asked topics: {context}"
+    instruction   = type_instructions.get(question_type, "Create a question.")
+    context_block = f"\n\nAvoid repeating these recently asked topics: {context}" if context else ""
 
     return f"""You are an expert German language teacher preparing a student for the TELC B1 exam.
 
@@ -170,16 +169,24 @@ Required JSON schema:
 """
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _extract_json(text: str) -> Dict:
-    """Strip markdown fences if Gemini adds them despite instructions."""
+    """Strip markdown fences if the model adds them despite instructions."""
     text = text.strip()
-    # Remove ```json ... ``` or ``` ... ```
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     return json.loads(text)
 
+
+def _gen_config() -> types.GenerateContentConfig:
+    return types.GenerateContentConfig(
+        temperature=0.9,
+        response_mime_type="application/json",
+    )
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 async def generate_question(
     topic: str,
@@ -188,32 +195,38 @@ async def generate_question(
     difficulty: float,
     recent_context: Optional[str] = None,
 ) -> Dict:
-    prompt = _build_question_prompt(topic, subtopic, question_type, difficulty, recent_context)
-    model = _get_model()
-
-    loop = asyncio.get_event_loop()
+    prompt  = _build_question_prompt(topic, subtopic, question_type, difficulty, recent_context)
+    client  = _client_or_raise()
+    loop    = asyncio.get_event_loop()
     response = await loop.run_in_executor(
-        None, lambda: model.generate_content(prompt)
+        None,
+        lambda: client.models.generate_content(
+            model=MODEL,
+            contents=prompt,
+            config=_gen_config(),
+        ),
     )
     data = _extract_json(response.text)
-
-    # Normalise fields Gemini might omit
-    data.setdefault("topic",    topic)
-    data.setdefault("subtopic", subtopic)
+    data.setdefault("topic",      topic)
+    data.setdefault("subtopic",   subtopic)
     data.setdefault("difficulty", difficulty)
     return data
 
 
 async def evaluate_answer(question_data: Dict, user_answer: str) -> Dict:
-    prompt = _build_eval_prompt(question_data, user_answer)
-    model = _get_model()
-
-    loop = asyncio.get_event_loop()
+    prompt  = _build_eval_prompt(question_data, user_answer)
+    client  = _client_or_raise()
+    loop    = asyncio.get_event_loop()
     response = await loop.run_in_executor(
-        None, lambda: model.generate_content(prompt)
+        None,
+        lambda: client.models.generate_content(
+            model=MODEL,
+            contents=prompt,
+            config=_gen_config(),
+        ),
     )
     data = _extract_json(response.text)
     data.setdefault("is_correct", False)
-    data.setdefault("score", 0.0)
-    data.setdefault("feedback", "")
+    data.setdefault("score",      0.0)
+    data.setdefault("feedback",   "")
     return data
