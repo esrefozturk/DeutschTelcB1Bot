@@ -4,8 +4,6 @@ TELC B1 German Preparation Bot
 Commands:
   /start   – Welcome + start practice
   /next    – Get the next question immediately
-  /pause   – Pause practice
-  /resume  – Resume practice
   /stats   – Show personal performance statistics
   /topic   – List topics / focus on a specific topic
   /help    – Command reference
@@ -13,6 +11,7 @@ Commands:
 Any non-command message is treated as the answer to the pending question.
 """
 
+import html
 import logging
 import os
 from textwrap import dedent
@@ -57,39 +56,39 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 GEMINI_API_KEY  = os.environ["GEMINI_API_KEY"]
 DATABASE_PATH   = os.getenv("DATABASE_PATH", "deutsch_bot.db")
 
+# ── Static messages (HTML) ────────────────────────────────────────────────────
+
+WELCOME_MSG = (
+    "👋 <b>Willkommen!</b> I'm your personal TELC B1 German coach.\n\n"
+    "I'll send you adaptive questions covering:\n"
+    "• Grammar (cases, verbs, prepositions, …)\n"
+    "• Vocabulary (daily life, work, travel, …)\n"
+    "• Reading comprehension\n"
+    "• Writing tasks\n\n"
+    "Questions are chosen based on your past answers, so the areas you "
+    "struggle with will appear more often — keeping you growing.\n\n"
+    "Type /next (or just answer) to begin. Viel Erfolg! 🇩🇪"
+)
+
+HELP_MSG = (
+    "<b>Commands</b>\n\n"
+    "/start  – Welcome message\n"
+    "/next   – Get the next question now\n"
+    "/stats  – Your performance summary\n"
+    "/topic  – Browse or focus on a topic\n"
+    "/help   – This message\n\n"
+    "<b>Answering</b>\n"
+    "• For multiple-choice questions tap a button OR type A / B / C / D.\n"
+    "• For all other types just type your answer freely.\n"
+    "• Minor spelling mistakes are OK; grammar concepts are graded strictly."
+)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-WELCOME_MSG = dedent("""\
-    👋 *Willkommen!* I'm your personal TELC B1 German coach.
-
-    I'll send you adaptive questions covering:
-    • Grammar (cases, verbs, prepositions, …)
-    • Vocabulary (daily life, work, travel, …)
-    • Reading comprehension
-    • Writing tasks
-
-    Questions are chosen based on your past answers, so the areas you \
-    struggle with will appear more often — keeping you growing.
-
-    Type /next (or just answer) to begin. Viel Erfolg! 🇩🇪
-""")
-
-HELP_MSG = dedent("""\
-    *Commands*
-
-    /start   – Welcome message
-    /next    – Get the next question now
-    /pause   – Pause practice
-    /resume  – Resume practice
-    /stats   – Your performance summary
-    /topic   – Browse or focus on a topic
-    /help    – This message
-
-    *Answering*
-    • For multiple-choice questions tap a button OR type A / B / C / D.
-    • For all other types just type your answer freely.
-    • Minor spelling mistakes are OK; grammar concepts are graded strictly.
-""")
+def _esc(text: str) -> str:
+    """Escape text for Telegram HTML parse mode."""
+    return html.escape(str(text))
 
 
 def _difficulty_stars(d: float) -> str:
@@ -115,29 +114,28 @@ def _action_keyboard() -> InlineKeyboardMarkup:
 
 
 def _fmt_question(q: dict, is_first: bool = False) -> str:
-    """Format a question dict into Telegram markdown."""
+    """Format a question dict into Telegram HTML."""
     topic_label    = TOPICS.get(q["topic"], {}).get("label", q["topic"])
     subtopic_label = TOPICS.get(q["topic"], {}).get("subtopics", {}).get(q["subtopic"], q["subtopic"])
     stars          = _difficulty_stars(q.get("difficulty", 2))
     qtype_pretty   = q["question_type"].replace("_", " ").title()
 
-    divider = "" if is_first else "〰️〰️〰️ *Next Question* 〰️〰️〰️\n\n"
+    divider = "" if is_first else "〰️〰️〰️ <b>Next Question</b> 〰️〰️〰️\n\n"
     header = (
         f"{divider}"
-        f"📚 *{topic_label}* › _{subtopic_label}_\n"
-        f"Difficulty: {stars}  |  Type: {qtype_pretty}\n\n"
+        f"📚 <b>{_esc(topic_label)}</b> › <i>{_esc(subtopic_label)}</i>\n"
+        f"Difficulty: {stars}  |  Type: {_esc(qtype_pretty)}\n\n"
     )
 
-    # Replace blank marker with a visible monospace placeholder.
-    # Plain "___" gets swallowed by Telegram's Markdown italic parser.
-    body = q["question"].replace("___", "`______`")
+    # Escape AI content, then replace blank marker with a visible code span.
+    body = _esc(q["question"]).replace("___", "<code>______</code>")
 
     if q["question_type"] == "sentence_building":
-        body += "\n\n_(Arrange the words into a correct German sentence.)_"
+        body += "\n\n<i>(Arrange the words into a correct German sentence.)</i>"
     elif q["question_type"] == "fill_blank":
-        body += "\n\n_(Fill in the blank.)_"
+        body += "\n\n<i>(Fill in the blank.)</i>"
     elif q["question_type"] == "error_correction":
-        body += "\n\n_(Find and correct the single grammatical error.)_"
+        body += "\n\n<i>(Find and correct the single grammatical error.)</i>"
 
     return header + body
 
@@ -184,18 +182,17 @@ async def _send_question(
 
     db.set_pending_question(user_id, question)
 
-    text    = _fmt_question(question, is_first=is_first)
+    text         = _fmt_question(question, is_first=is_first)
     reply_markup = None
     if question["question_type"] == "multiple_choice" and "options" in question:
         reply_markup = _build_mc_keyboard(question["options"])
-        # Append options to message text for clarity
-        options_text = "\n".join(question["options"])
+        options_text = "\n".join(_esc(opt) for opt in question["options"])
         text += f"\n\n{options_text}"
 
     await context.bot.send_message(
         chat_id=chat_id,
         text=text,
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
         reply_markup=reply_markup,
     )
 
@@ -207,7 +204,7 @@ async def _handle_answer(
     user_answer: str,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    """Evaluate the user's answer, give feedback, then send the next question."""
+    """Evaluate the user's answer, give feedback, then show action buttons."""
     pending = db.get_pending_question(user_id)
     if not pending:
         await _send_question(db, user_id, chat_id, context)
@@ -232,24 +229,24 @@ async def _handle_answer(
 
     # Emoji header
     if score >= 0.9:
-        header = "✅ *Correct!*"
+        header = "✅ <b>Correct!</b>"
     elif score >= 0.5:
-        header = "🟡 *Partially correct*"
+        header = "🟡 <b>Partially correct</b>"
     else:
-        header = "❌ *Not quite*"
+        header = "❌ <b>Not quite</b>"
 
     parts = [header]
     if feedback:
-        parts.append(feedback)
+        parts.append(_esc(feedback))
     if correction:
-        parts.append(f"*Correction:* {correction}")
-    parts.append(f"*Correct answer:* `{pending.get('correct_answer', '')}`")
+        parts.append(f"<b>Correction:</b> {_esc(correction)}")
+    parts.append(f"<b>Correct answer:</b> <code>{_esc(pending.get('correct_answer', ''))}</code>")
     if pending.get("explanation"):
-        parts.append(f"💡 _{pending['explanation']}_")
+        parts.append(f"💡 <i>{_esc(pending['explanation'])}</i>")
 
     # Update DB
-    old_perf   = db.get_topic_performance(user_id, pending["topic"], pending["subtopic"])
-    new_diff   = adjust_difficulty(old_perf.get("difficulty", 2.0), is_correct)
+    old_perf = db.get_topic_performance(user_id, pending["topic"], pending["subtopic"])
+    new_diff = adjust_difficulty(old_perf.get("difficulty", 2.0), is_correct)
     db.update_performance(user_id, pending["topic"], pending["subtopic"], is_correct, score, new_diff)
 
     # Keep pending question with answer context for "Explain More"
@@ -262,7 +259,7 @@ async def _handle_answer(
     await context.bot.send_message(
         chat_id=chat_id,
         text="\n\n".join(parts),
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
         reply_markup=_action_keyboard(),
     )
 
@@ -273,9 +270,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db: Database = context.bot_data["db"]
     user = update.effective_user
     db.upsert_user(user.id, user.username or "", user.first_name or "")
-    db.set_paused(user.id, False)
 
-    await update.message.reply_text(WELCOME_MSG, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(WELCOME_MSG, parse_mode=ParseMode.HTML)
     await _send_question(db, user.id, update.effective_chat.id, context, is_first=True)
 
 
@@ -283,26 +279,9 @@ async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db: Database = context.bot_data["db"]
     user = update.effective_user
     db.upsert_user(user.id, user.username or "", user.first_name or "")
-    db.set_paused(user.id, False)
 
     # If there is a pending question, skip it (don't evaluate)
     db.set_pending_question(user.id, None)
-    await _send_question(db, user.id, update.effective_chat.id, context, is_first=True)
-
-
-async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db: Database = context.bot_data["db"]
-    db.set_paused(update.effective_user.id, True)
-    await update.message.reply_text(
-        "⏸ Practice paused. Type /resume whenever you're ready."
-    )
-
-
-async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db: Database = context.bot_data["db"]
-    user = update.effective_user
-    db.set_paused(user.id, False)
-    await update.message.reply_text("▶️ Let's go!")
     await _send_question(db, user.id, update.effective_chat.id, context, is_first=True)
 
 
@@ -318,29 +297,29 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     lines = [
-        "📊 *Your Progress*",
+        "📊 <b>Your Progress</b>",
         "",
-        f"Questions answered: *{s['total_questions']}*",
-        f"Correct: *{s['total_correct']}*  |  Wrong: *{s['total_incorrect']}*",
-        f"Accuracy: *{s['accuracy']}%*  |  Avg score: *{s['avg_score']}%*",
+        f"Questions answered: <b>{s['total_questions']}</b>",
+        f"Correct: <b>{s['total_correct']}</b>  |  Wrong: <b>{s['total_incorrect']}</b>",
+        f"Accuracy: <b>{s['accuracy']}%</b>  |  Avg score: <b>{s['avg_score']}%</b>",
         "",
-        "_Accuracy counts fully correct answers only. Avg score includes partial credit._",
+        "<i>Accuracy counts fully correct answers only. Avg score includes partial credit.</i>",
         "",
     ]
 
     if s["weak_areas"]:
-        lines.append("🔴 *Areas to focus on:*")
+        lines.append("🔴 <b>Areas to focus on:</b>")
         for w in s["weak_areas"]:
             er       = round(w["error_rate"] * 100)
             avg      = round(w.get("avg_score", 0) * 100)
-            topic    = w["topic"].replace("_", " ")
-            subtopic = w["subtopic"].replace("_", " ")
+            topic    = _esc(w["topic"].replace("_", " "))
+            subtopic = _esc(w["subtopic"].replace("_", " "))
             lines.append(f"  • {topic} › {subtopic}  ({er}% errors, {avg}% avg score)")
     else:
         lines.append("🟢 No major weak spots yet — keep going!")
 
     await update.message.reply_text(
-        "\n".join(lines), parse_mode=ParseMode.MARKDOWN
+        "\n".join(lines), parse_mode=ParseMode.HTML
     )
 
 
@@ -349,13 +328,12 @@ async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
 
     if not args:
-        # Show topic list
-        lines = ["*Available topics* (use `/topic <name>` to focus):\n"]
+        lines = ["<b>Available topics</b> (use <code>/topic &lt;name&gt;</code> to focus):\n"]
         for key, data in TOPICS.items():
             subtopics = ", ".join(data["subtopics"].keys())
-            lines.append(f"*{key}*: {subtopics}")
+            lines.append(f"<b>{_esc(key)}</b>: {_esc(subtopics)}")
         await update.message.reply_text(
-            "\n".join(lines), parse_mode=ParseMode.MARKDOWN
+            "\n".join(lines), parse_mode=ParseMode.HTML
         )
         return
 
@@ -364,15 +342,16 @@ async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if topic_arg not in TOPICS:
         await update.message.reply_text(
-            f"Unknown topic '{topic_arg}'. Use /topic to see available topics."
+            f"Unknown topic '{_esc(topic_arg)}'. Use /topic to see available topics.",
+            parse_mode=ParseMode.HTML,
         )
         return
 
     if subtopic_arg and subtopic_arg not in TOPICS[topic_arg]["subtopics"]:
         available = ", ".join(TOPICS[topic_arg]["subtopics"].keys())
         await update.message.reply_text(
-            f"Unknown subtopic. Available for *{topic_arg}*: {available}",
-            parse_mode=ParseMode.MARKDOWN,
+            f"Unknown subtopic. Available for <b>{_esc(topic_arg)}</b>: {_esc(available)}",
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -381,8 +360,8 @@ async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         subtopic_arg = random.choice(list(TOPICS[topic_arg]["subtopics"].keys()))
 
     await update.message.reply_text(
-        f"Focusing on *{topic_arg}* › _{subtopic_arg}_",
-        parse_mode=ParseMode.MARKDOWN,
+        f"Focusing on <b>{_esc(topic_arg)}</b> › <i>{_esc(subtopic_arg)}</i>",
+        parse_mode=ParseMode.HTML,
     )
     db.set_pending_question(update.effective_user.id, None)
     await _send_question(
@@ -396,7 +375,7 @@ async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(HELP_MSG, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(HELP_MSG, parse_mode=ParseMode.HTML)
 
 
 # ── Message handler (free-text answers) ──────────────────────────────────────
@@ -406,18 +385,11 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db.upsert_user(user.id, user.username or "", user.first_name or "")
 
-    row = db.get_user(user.id)
-    if row and row["is_paused"]:
-        await update.message.reply_text(
-            "Practice is paused. Type /resume to continue."
-        )
-        return
-
     pending = db.get_pending_question(user.id)
     if pending and pending.get("_answered"):
         await update.message.reply_text(
-            "Use the buttons above — *💡 Explain More* or *➡️ Next Question*.",
-            parse_mode=ParseMode.MARKDOWN,
+            "Use the buttons above — <b>💡 Explain More</b> or <b>➡️ Next Question</b>.",
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -486,8 +458,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.set_pending_question(user.id, pending)
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text=explanation,
-            parse_mode=ParseMode.MARKDOWN,
+            text=_esc(explanation),
+            parse_mode=ParseMode.HTML,
             reply_markup=_action_keyboard(),
         )
 
@@ -503,8 +475,6 @@ def main():
 
     app.add_handler(CommandHandler("start",  cmd_start))
     app.add_handler(CommandHandler("next",   cmd_next))
-    app.add_handler(CommandHandler("pause",  cmd_pause))
-    app.add_handler(CommandHandler("resume", cmd_resume))
     app.add_handler(CommandHandler("stats",  cmd_stats))
     app.add_handler(CommandHandler("topic",  cmd_topic))
     app.add_handler(CommandHandler("help",   cmd_help))
