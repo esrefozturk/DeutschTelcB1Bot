@@ -106,14 +106,16 @@ def _build_mc_keyboard(options: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
-def _fmt_question(q: dict) -> str:
+def _fmt_question(q: dict, is_first: bool = False) -> str:
     """Format a question dict into Telegram markdown."""
     topic_label    = TOPICS.get(q["topic"], {}).get("label", q["topic"])
     subtopic_label = TOPICS.get(q["topic"], {}).get("subtopics", {}).get(q["subtopic"], q["subtopic"])
     stars          = _difficulty_stars(q.get("difficulty", 2))
     qtype_pretty   = q["question_type"].replace("_", " ").title()
 
+    divider = "" if is_first else "〰️〰️〰️ *Next Question* 〰️〰️〰️\n\n"
     header = (
+        f"{divider}"
         f"📚 *{topic_label}* › _{subtopic_label}_\n"
         f"Difficulty: {stars}  |  Type: {qtype_pretty}\n\n"
     )
@@ -139,6 +141,7 @@ async def _send_question(
     context: ContextTypes.DEFAULT_TYPE,
     forced_topic: Optional[str] = None,
     forced_subtopic: Optional[str] = None,
+    is_first: bool = False,
 ):
     """Generate the next question and send it to the user."""
     performance = db.get_all_performance(user_id)
@@ -173,7 +176,7 @@ async def _send_question(
 
     db.set_pending_question(user_id, question)
 
-    text    = _fmt_question(question)
+    text    = _fmt_question(question, is_first=is_first)
     reply_markup = None
     if question["question_type"] == "multiple_choice" and "options" in question:
         reply_markup = _build_mc_keyboard(question["options"])
@@ -261,7 +264,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.set_paused(user.id, False)
 
     await update.message.reply_text(WELCOME_MSG, parse_mode=ParseMode.MARKDOWN)
-    await _send_question(db, user.id, update.effective_chat.id, context)
+    await _send_question(db, user.id, update.effective_chat.id, context, is_first=True)
 
 
 async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -272,7 +275,7 @@ async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # If there is a pending question, skip it (don't evaluate)
     db.set_pending_question(user.id, None)
-    await _send_question(db, user.id, update.effective_chat.id, context)
+    await _send_question(db, user.id, update.effective_chat.id, context, is_first=True)
 
 
 async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -288,7 +291,7 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db.set_paused(user.id, False)
     await update.message.reply_text("▶️ Let's go!")
-    await _send_question(db, user.id, update.effective_chat.id, context)
+    await _send_question(db, user.id, update.effective_chat.id, context, is_first=True)
 
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
