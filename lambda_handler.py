@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 
 load_dotenv()  # no-op in Lambda (env vars come from the runtime), safe locally
 
+import httpx
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -31,6 +32,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 import gemini_client
 from database_dynamo import DynamoDatabase
@@ -67,7 +69,12 @@ _db = DynamoDatabase()
 
 
 async def _build_application() -> Application:
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    # Disable connection keep-alive so warm Lambda invocations never reuse a
+    # TCP connection that AWS NAT has already silently dropped (→ ConnectTimeout).
+    _request = HTTPXRequest(
+        httpx_kwargs={"limits": httpx.Limits(max_connections=5, max_keepalive_connections=0)}
+    )
+    app = Application.builder().token(TELEGRAM_TOKEN).request(_request).build()
     app.bot_data["db"] = _db
 
     app.add_handler(CommandHandler("start",  cmd_start))
