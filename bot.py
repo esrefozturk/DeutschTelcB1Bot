@@ -108,8 +108,8 @@ def _build_mc_keyboard(options: list[str]) -> InlineKeyboardMarkup:
 
 def _fmt_question(q: dict) -> str:
     """Format a question dict into Telegram markdown."""
-    topic_label    = TOPICS[q["topic"]]["label"]
-    subtopic_label = TOPICS[q["topic"]]["subtopics"][q["subtopic"]]
+    topic_label    = TOPICS.get(q["topic"], {}).get("label", q["topic"])
+    subtopic_label = TOPICS.get(q["topic"], {}).get("subtopics", {}).get(q["subtopic"], q["subtopic"])
     stars          = _difficulty_stars(q.get("difficulty", 2))
     qtype_pretty   = q["question_type"].replace("_", " ").title()
 

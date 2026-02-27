@@ -246,8 +246,11 @@ async def generate_question(
     prompt = _build_question_prompt(topic, subtopic, question_type, difficulty, recent_context)
     text   = await _call_with_fallback(prompt)
     data   = _extract_json(text)
-    data.setdefault("topic",      topic)
-    data.setdefault("subtopic",   subtopic)
+    # Always force topic/subtopic to our chosen values — Gemini sometimes echoes
+    # back augmented strings like "verb_conjugation (Perfekt)" which break the
+    # TOPICS dict lookup in bot.py.
+    data["topic"]    = topic
+    data["subtopic"] = subtopic
     data.setdefault("difficulty", difficulty)
     return data
 
