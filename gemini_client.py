@@ -4,26 +4,41 @@ Gemini API client (uses the current google-genai SDK).
 Two public coroutines:
   generate_question(topic, subtopic, question_type, difficulty, context) -> dict
   evaluate_answer(question_data, user_answer)                             -> dict
+
+Model fallback chain (sorted best → worst by quality, all have free quota):
+  1. gemini-2.5-flash      — 5 RPM  / 20 RPD  (best quality)
+  2. gemini-2.5-flash-lite — 10 RPM / 20 RPD  (higher RPM)
+  3. gemini-3-flash         — 5 RPM  / 20 RPD  (experimental)
+
+If a model returns 429 (quota exhausted), the next one is tried automatically.
 """
 
 import json
+import logging
 import re
 import asyncio
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from google import genai
 from google.genai import types
 
 from adaptive import get_subtopic_description, difficulty_label
 
+logger = logging.getLogger(__name__)
+
 # Module-level client — initialised once by init_gemini()
 _client: Optional[genai.Client] = None
-MODEL = "gemini-2.5-flash"   # free tier on this project: 5 RPM / 20 RPD
+
+# Fallback chain: primary first, then fallbacks in order
+MODELS: List[str] = [
+    "gemini-2.5-flash",       # 5 RPM / 20 RPD — best quality
+    "gemini-2.5-flash-lite",  # 10 RPM / 20 RPD — higher RPM
+    "gemini-3-flash",         # 5 RPM / 20 RPD — experimental
+]
 
 
 def init_gemini(api_key: str):
     global _client
-    # Use default v1beta endpoint — all gemini-2.x models live there
     _client = genai.Client(api_key=api_key)
 
 
@@ -187,6 +202,38 @@ def _gen_config() -> types.GenerateContentConfig:
     )
 
 
+def _is_quota_error(exc: Exception) -> bool:
+    msg = str(exc)
+    return "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower()
+
+
+async def _call_with_fallback(prompt: str) -> str:
+    """Try each model in MODELS order; fall back on 429 quota errors."""
+    client = _client_or_raise()
+    last_exc: Optional[Exception] = None
+    for model in MODELS:
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda m=model: client.models.generate_content(
+                    model=m,
+                    contents=prompt,
+                    config=_gen_config(),
+                ),
+            )
+            if model != MODELS[0]:
+                logger.info("Fell back to model: %s", model)
+            return response.text
+        except Exception as exc:
+            if _is_quota_error(exc):
+                logger.warning("Quota exhausted on %s, trying next model.", model)
+                last_exc = exc
+                continue
+            raise  # non-quota errors bubble up immediately
+    raise last_exc  # all models exhausted
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 async def generate_question(
@@ -196,18 +243,9 @@ async def generate_question(
     difficulty: float,
     recent_context: Optional[str] = None,
 ) -> Dict:
-    prompt  = _build_question_prompt(topic, subtopic, question_type, difficulty, recent_context)
-    client  = _client_or_raise()
-    loop    = asyncio.get_event_loop()
-    response = await loop.run_in_executor(
-        None,
-        lambda: client.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-            config=_gen_config(),
-        ),
-    )
-    data = _extract_json(response.text)
+    prompt = _build_question_prompt(topic, subtopic, question_type, difficulty, recent_context)
+    text   = await _call_with_fallback(prompt)
+    data   = _extract_json(text)
     data.setdefault("topic",      topic)
     data.setdefault("subtopic",   subtopic)
     data.setdefault("difficulty", difficulty)
@@ -215,18 +253,9 @@ async def generate_question(
 
 
 async def evaluate_answer(question_data: Dict, user_answer: str) -> Dict:
-    prompt  = _build_eval_prompt(question_data, user_answer)
-    client  = _client_or_raise()
-    loop    = asyncio.get_event_loop()
-    response = await loop.run_in_executor(
-        None,
-        lambda: client.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-            config=_gen_config(),
-        ),
-    )
-    data = _extract_json(response.text)
+    prompt = _build_eval_prompt(question_data, user_answer)
+    text   = await _call_with_fallback(prompt)
+    data   = _extract_json(text)
     data.setdefault("is_correct", False)
     data.setdefault("score",      0.0)
     data.setdefault("feedback",   "")
