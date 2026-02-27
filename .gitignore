@@ -1,0 +1,28 @@
+# Secrets — never commit these
+.env
+
+# Local SQLite database
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# SAM build artifacts and config (samconfig.toml stores parameter values)
+.aws-sam/
+samconfig.toml
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp

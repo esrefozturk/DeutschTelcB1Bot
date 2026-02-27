@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  TELC B1 German Learning Telegram Bot
+  Webhook-based Lambda + API Gateway + DynamoDB
+
+# ── Parameters ────────────────────────────────────────────────────────────────
+Parameters:
+  TelegramToken:
+    Type: String
+    NoEcho: true
+    Description: "Telegram Bot Token (from @BotFather)"
+
+  GeminiApiKey:
+    Type: String
+    NoEcho: true
+    Description: "Google Gemini API Key (from Google AI Studio)"
+
+  Stage:
+    Type: String
+    Default: prod
+    AllowedValues: [prod, staging]
+    Description: "Deployment stage"
+
+# ── Globals ───────────────────────────────────────────────────────────────────
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 45          # Gemini can be slow on first call
+    MemorySize: 512      # Enough headroom for the ML libraries
+    Environment:
+      Variables:
+        TELEGRAM_TOKEN:    !Ref TelegramToken
+        GEMINI_API_KEY:    !Ref GeminiApiKey
+        USERS_TABLE:       !Ref UsersTable
+        SESSIONS_TABLE:    !Ref SessionsTable
+        PERFORMANCE_TABLE: !Ref PerformanceTable
+
+# ── Resources ─────────────────────────────────────────────────────────────────
+Resources:
+
+  # ── Lambda function ─────────────────────────────────────────────────────
+  BotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "DeutschTelcBot-${Stage}"
+      Handler: lambda_handler.lambda_handler
+      CodeUri: .
+      Description: "Processes incoming Telegram webhook updates"
+      # SAM automatically creates an execution role; we add DynamoDB permissions
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SessionsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PerformanceTable
+      Events:
+        WebhookPost:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BotApi
+            Path: /webhook
+            Method: POST
+
+  # ── API Gateway ─────────────────────────────────────────────────────────
+  BotApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "DeutschTelcBotApi-${Stage}"
+      StageName: !Ref Stage
+      # Telegram sends JSON; enable payload compression for large reading texts
+      MinimumCompressionSize: 1024
+      Auth:
+        # No auth — Telegram calls this endpoint directly.
+        # Security: only Telegram's IPs can reach it (no secret token needed
+        # because an attacker would need to know the exact webhook URL which
+        # contains an unpredictable API Gateway ID).
+        DefaultAuthorizer: NONE
+
+  # ── DynamoDB Tables ─────────────────────────────────────────────────────
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain   # keep data if stack is accidentally deleted
+    Properties:
+      TableName: !Sub "DeutschBotUsers-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+
+  SessionsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    Properties:
+      TableName: !Sub "DeutschBotSessions-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      # Auto-delete stale sessions after 30 days
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+
+  PerformanceTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    Properties:
+      TableName: !Sub "DeutschBotPerformance-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: topic_subtopic
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+        - AttributeName: topic_subtopic
+          KeyType: RANGE
+
+# ── Outputs ───────────────────────────────────────────────────────────────────
+Outputs:
+  WebhookUrl:
+    Description: >
+      Paste this URL into set_webhook.py (or deploy.sh does it automatically).
+    Value: !Sub "https://${BotApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/webhook"
+    Export:
+      Name: !Sub "${AWS::StackName}-WebhookUrl"
+
+  BotFunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt BotFunction.Arn
+
+  BotFunctionLogGroup:
+    Description: CloudWatch log group for the bot
+    Value: !Sub "/aws/lambda/DeutschTelcBot-${Stage}"
