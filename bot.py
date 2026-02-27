@@ -331,9 +331,11 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if s["weak_areas"]:
         lines.append("🔴 *Areas to focus on:*")
         for w in s["weak_areas"]:
-            er  = round(w["error_rate"] * 100)
-            avg = round(w.get("avg_score", 0) * 100)
-            lines.append(f"  • {w['topic']} › {w['subtopic']}  ({er}% errors, {avg}% avg score)")
+            er       = round(w["error_rate"] * 100)
+            avg      = round(w.get("avg_score", 0) * 100)
+            topic    = w["topic"].replace("_", " ")
+            subtopic = w["subtopic"].replace("_", " ")
+            lines.append(f"  • {topic} › {subtopic}  ({er}% errors, {avg}% avg score)")
     else:
         lines.append("🟢 No major weak spots yet — keep going!")
 
