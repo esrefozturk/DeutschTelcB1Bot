@@ -126,11 +126,12 @@ class DynamoDatabase:
         for item in resp.get("Items", []):
             parts = item["topic_subtopic"].split("#", 1)
             result.append({
-                "topic":    parts[0],
-                "subtopic": parts[1] if len(parts) > 1 else "",
-                "correct":   _int(item.get("correct",   0)),
-                "incorrect": _int(item.get("incorrect", 0)),
-                "difficulty": _float(item.get("difficulty", 2.0)),
+                "topic":       parts[0],
+                "subtopic":    parts[1] if len(parts) > 1 else "",
+                "correct":     _int(item.get("correct",     0)),
+                "incorrect":   _int(item.get("incorrect",   0)),
+                "total_score": _float(item.get("total_score", 0.0)),
+                "difficulty":  _float(item.get("difficulty",  2.0)),
                 "last_tested": item.get("last_tested", ""),
             })
         return result
@@ -157,6 +158,7 @@ class DynamoDatabase:
         topic: str,
         subtopic: str,
         is_correct: bool,
+        score: float,
         new_difficulty: float,
     ):
         # ADD atomically increments (creates with value 0+inc if item is new)
@@ -166,7 +168,7 @@ class DynamoDatabase:
                 "topic_subtopic": f"{topic}#{subtopic}",
             },
             UpdateExpression=(
-                "ADD #c :c_val, #i :i_val "
+                "ADD #c :c_val, #i :i_val, total_score :score "
                 "SET difficulty = :diff, last_tested = :now"
             ),
             ExpressionAttributeNames={
@@ -176,6 +178,7 @@ class DynamoDatabase:
             ExpressionAttributeValues={
                 ":c_val": Decimal(str(int(is_correct))),
                 ":i_val": Decimal(str(int(not is_correct))),
+                ":score": Decimal(str(round(score, 4))),
                 ":diff":  Decimal(str(round(new_difficulty, 2))),
                 ":now":   _now(),
             },
@@ -184,10 +187,12 @@ class DynamoDatabase:
     def get_stats_summary(self, user_id: int) -> Dict[str, Any]:
         rows = self.get_all_performance(user_id)
 
-        total_correct   = sum(r["correct"]   for r in rows)
-        total_incorrect = sum(r["incorrect"] for r in rows)
+        total_correct   = sum(r["correct"]     for r in rows)
+        total_incorrect = sum(r["incorrect"]   for r in rows)
+        total_score     = sum(r["total_score"] for r in rows)
         total           = total_correct + total_incorrect
         accuracy        = round(total_correct / total * 100, 1) if total else 0
+        avg_score       = round(total_score    / total * 100, 1) if total else 0
 
         # Weak areas: subtopics with ≥2 attempts, sorted by error rate
         weak = []
@@ -198,6 +203,7 @@ class DynamoDatabase:
                     "topic":      r["topic"],
                     "subtopic":   r["subtopic"],
                     "error_rate": r["incorrect"] / t,
+                    "avg_score":  r["total_score"] / t,
                 })
         weak.sort(key=lambda x: -x["error_rate"])
         weak = weak[:3]
@@ -207,6 +213,7 @@ class DynamoDatabase:
             "total_incorrect": total_incorrect,
             "total_questions": total,
             "accuracy":        accuracy,
+            "avg_score":       avg_score,
             "weak_areas":      weak,
             "questions_sent":  self.get_questions_sent(user_id),
         }

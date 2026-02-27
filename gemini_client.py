@@ -202,13 +202,19 @@ def _gen_config() -> types.GenerateContentConfig:
     )
 
 
+def _text_gen_config() -> types.GenerateContentConfig:
+    return types.GenerateContentConfig(temperature=0.7)
+
+
 def _is_quota_error(exc: Exception) -> bool:
     msg = str(exc)
     return "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower()
 
 
-async def _call_with_fallback(prompt: str) -> str:
+async def _call_with_fallback(prompt: str, config: Optional[types.GenerateContentConfig] = None) -> str:
     """Try each model in MODELS order; fall back on 429 quota errors."""
+    if config is None:
+        config = _gen_config()
     client = _client_or_raise()
     last_exc: Optional[Exception] = None
     for model in MODELS:
@@ -219,7 +225,7 @@ async def _call_with_fallback(prompt: str) -> str:
                 lambda m=model: client.models.generate_content(
                     model=m,
                     contents=prompt,
-                    config=_gen_config(),
+                    config=config,
                 ),
             )
             if model != MODELS[0]:
@@ -263,3 +269,55 @@ async def evaluate_answer(question_data: Dict, user_answer: str) -> Dict:
     data.setdefault("score",      0.0)
     data.setdefault("feedback",   "")
     return data
+
+
+def _build_explain_prompt(
+    question_data: Dict,
+    user_answer: str,
+    previous_feedback: str,
+    depth: int,
+) -> str:
+    q_type = question_data.get("question_type", "")
+    options_block = ""
+    if q_type == "multiple_choice" and "options" in question_data:
+        options_block = "\nOptions were:\n" + "\n".join(question_data["options"])
+
+    follow_up = (
+        "The learner wants a deeper explanation of this concept."
+        if depth == 0
+        else f"The learner is asking for even more clarification (follow-up #{depth + 1}). Go deeper or try a different angle."
+    )
+
+    return f"""You are a German language teacher helping a TELC B1 learner understand a concept deeply.
+
+Question ({q_type}):
+{question_data.get('question', '')}{options_block}
+
+Correct answer: {question_data.get('correct_answer', '')}
+Learner's answer: {user_answer}
+Previous feedback given: {previous_feedback or 'None'}
+
+{follow_up}
+
+Please explain:
+- WHY the correct answer is correct (the grammar rule or vocabulary meaning)
+- WHY the learner's answer was wrong (if it was)
+- The underlying German grammar rule with its name (e.g. "Dativ case", "Perfekt tense")
+- A concrete memory tip or analogy to remember this rule
+- 1-2 additional example sentences in German (with English translations)
+
+Keep your explanation friendly, clear, and mostly in English. Bold German words/phrases using *asterisks*.
+Format nicely with line breaks. Keep it to 4-6 short paragraphs maximum.
+Do NOT return JSON — just plain prose with markdown formatting.
+"""
+
+
+async def explain_further(
+    question_data: Dict,
+    user_answer: str,
+    previous_feedback: str,
+    depth: int = 0,
+) -> str:
+    prompt = _build_explain_prompt(question_data, user_answer, previous_feedback, depth)
+    text   = await _call_with_fallback(prompt, config=_text_gen_config())
+    return text.strip()

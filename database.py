@@ -39,11 +39,17 @@ class Database:
                     subtopic    TEXT NOT NULL,
                     correct     INTEGER DEFAULT 0,
                     incorrect   INTEGER DEFAULT 0,
+                    total_score REAL DEFAULT 0.0,
                     difficulty  REAL DEFAULT 2.0,   -- 1.0 – 5.0
                     last_tested TEXT,
                     UNIQUE(user_id, topic, subtopic)
                 );
             """)
+            # Migration: add total_score to existing databases
+            try:
+                conn.execute("ALTER TABLE performance ADD COLUMN total_score REAL DEFAULT 0.0")
+            except Exception:
+                pass
 
     # ── Users ──────────────────────────────────────────────────────────────
 
@@ -135,23 +141,25 @@ class Database:
         topic: str,
         subtopic: str,
         is_correct: bool,
+        score: float,
         new_difficulty: float,
     ):
         with self._conn() as conn:
             conn.execute(
                 """
-                INSERT INTO performance (user_id, topic, subtopic, correct, incorrect, difficulty, last_tested)
-                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                INSERT INTO performance (user_id, topic, subtopic, correct, incorrect, total_score, difficulty, last_tested)
+                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(user_id, topic, subtopic) DO UPDATE SET
-                    correct   = correct   + ?,
-                    incorrect = incorrect + ?,
-                    difficulty = ?,
+                    correct     = correct     + ?,
+                    incorrect   = incorrect   + ?,
+                    total_score = total_score + ?,
+                    difficulty  = ?,
                     last_tested = datetime('now')
                 """,
                 (
                     user_id, topic, subtopic,
-                    int(is_correct), int(not is_correct), new_difficulty,
-                    int(is_correct), int(not is_correct), new_difficulty,
+                    int(is_correct), int(not is_correct), score, new_difficulty,
+                    int(is_correct), int(not is_correct), score, new_difficulty,
                 ),
             )
 
@@ -160,23 +168,26 @@ class Database:
             row = conn.execute(
                 """
                 SELECT
-                    SUM(correct)   AS total_correct,
-                    SUM(incorrect) AS total_incorrect,
-                    COUNT(DISTINCT topic) AS topics_practiced
+                    SUM(correct)     AS total_correct,
+                    SUM(incorrect)   AS total_incorrect,
+                    SUM(total_score) AS total_score
                 FROM performance WHERE user_id = ?
                 """,
                 (user_id,),
             ).fetchone()
             total_correct   = row["total_correct"]   or 0
             total_incorrect = row["total_incorrect"] or 0
+            total_score     = row["total_score"]     or 0.0
             total           = total_correct + total_incorrect
             accuracy        = round(total_correct / total * 100, 1) if total else 0
+            avg_score       = round(total_score / total * 100, 1) if total else 0
 
             # Weakest topics
             weak = conn.execute(
                 """
                 SELECT topic, subtopic,
-                       CAST(incorrect AS REAL) / (correct + incorrect) AS error_rate
+                       CAST(incorrect AS REAL) / (correct + incorrect) AS error_rate,
+                       total_score / (correct + incorrect) AS avg_score
                 FROM performance
                 WHERE user_id = ? AND (correct + incorrect) >= 2
                 ORDER BY error_rate DESC
@@ -190,6 +201,7 @@ class Database:
                 "total_incorrect": total_incorrect,
                 "total_questions": total,
                 "accuracy":        accuracy,
+                "avg_score":       avg_score,
                 "weak_areas":      [dict(r) for r in weak],
                 "questions_sent":  self.get_questions_sent(user_id),
             }

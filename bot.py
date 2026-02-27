@@ -40,7 +40,7 @@ from adaptive import (
     pick_next_params,
 )
 from database import Database
-from gemini_client import evaluate_answer, generate_question, init_gemini
+from gemini_client import evaluate_answer, explain_further, generate_question, init_gemini
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -104,6 +104,14 @@ def _build_mc_keyboard(options: list[str]) -> InlineKeyboardMarkup:
         for opt in options
     ]
     return InlineKeyboardMarkup(buttons)
+
+
+def _action_keyboard() -> InlineKeyboardMarkup:
+    """Buttons shown after evaluation: explain or continue."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("💡 Explain More", callback_data="explain"),
+        InlineKeyboardButton("➡️ Next Question", callback_data="next_q"),
+    ]])
 
 
 def _fmt_question(q: dict, is_first: bool = False) -> str:
@@ -239,20 +247,24 @@ async def _handle_answer(
     if pending.get("explanation"):
         parts.append(f"💡 _{pending['explanation']}_")
 
+    # Update DB
+    old_perf   = db.get_topic_performance(user_id, pending["topic"], pending["subtopic"])
+    new_diff   = adjust_difficulty(old_perf.get("difficulty", 2.0), is_correct)
+    db.update_performance(user_id, pending["topic"], pending["subtopic"], is_correct, score, new_diff)
+
+    # Keep pending question with answer context for "Explain More"
+    pending["_answered"]      = True
+    pending["_user_answer"]   = user_answer
+    pending["_last_feedback"] = feedback + (f"\nCorrection: {correction}" if correction else "")
+    pending["_explain_depth"] = 0
+    db.set_pending_question(user_id, pending)
+
     await context.bot.send_message(
         chat_id=chat_id,
         text="\n\n".join(parts),
         parse_mode=ParseMode.MARKDOWN,
+        reply_markup=_action_keyboard(),
     )
-
-    # Update DB
-    old_perf   = db.get_topic_performance(user_id, pending["topic"], pending["subtopic"])
-    new_diff   = adjust_difficulty(old_perf.get("difficulty", 2.0), is_correct)
-    db.update_performance(user_id, pending["topic"], pending["subtopic"], is_correct, new_diff)
-    db.set_pending_question(user_id, None)
-
-    # Auto-send next question
-    await _send_question(db, user_id, chat_id, context)
 
 
 # ── Command handlers ──────────────────────────────────────────────────────────
@@ -310,15 +322,18 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "",
         f"Questions answered: *{s['total_questions']}*",
         f"Correct: *{s['total_correct']}*  |  Wrong: *{s['total_incorrect']}*",
-        f"Accuracy: *{s['accuracy']}%*",
+        f"Accuracy: *{s['accuracy']}%*  |  Avg score: *{s['avg_score']}%*",
+        "",
+        "_Accuracy counts fully correct answers only. Avg score includes partial credit._",
         "",
     ]
 
     if s["weak_areas"]:
         lines.append("🔴 *Areas to focus on:*")
         for w in s["weak_areas"]:
-            er = round(w["error_rate"] * 100)
-            lines.append(f"  • {w['topic']} › {w['subtopic']}  ({er}% errors)")
+            er  = round(w["error_rate"] * 100)
+            avg = round(w.get("avg_score", 0) * 100)
+            lines.append(f"  • {w['topic']} › {w['subtopic']}  ({er}% errors, {avg}% avg score)")
     else:
         lines.append("🟢 No major weak spots yet — keep going!")
 
@@ -396,6 +411,14 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    pending = db.get_pending_question(user.id)
+    if pending and pending.get("_answered"):
+        await update.message.reply_text(
+            "Use the buttons above — *💡 Explain More* or *➡️ Next Question*.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
     user_text = update.message.text.strip()
     await _handle_answer(db, user.id, update.effective_chat.id, user_text, context)
 
@@ -410,16 +433,60 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     db.upsert_user(user.id, user.username or "", user.first_name or "")
 
-    data = query.data  # e.g. "answer:A"
+    data = query.data  # e.g. "answer:A", "explain", "next_q"
+
     if data.startswith("answer:"):
         user_answer = data.split(":", 1)[1]
-        # Edit the original message to remove buttons
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
             pass
         await _handle_answer(
             db, user.id, query.message.chat_id, user_answer, context
+        )
+
+    elif data == "next_q":
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        db.set_pending_question(user.id, None)
+        await _send_question(db, user.id, query.message.chat_id, context, is_first=True)
+
+    elif data == "explain":
+        pending = db.get_pending_question(user.id)
+        if not pending or not pending.get("_answered"):
+            await query.answer("No question context found.")
+            return
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        depth = pending.get("_explain_depth", 0)
+        try:
+            await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+            explanation = await explain_further(
+                pending,
+                pending.get("_user_answer", ""),
+                pending.get("_last_feedback", ""),
+                depth,
+            )
+        except Exception as exc:
+            logger.error("explain_further failed: %s", exc)
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="⚠️ Couldn't generate explanation right now.",
+                reply_markup=_action_keyboard(),
+            )
+            return
+        pending["_explain_depth"] = depth + 1
+        pending["_last_feedback"] = explanation[:500]  # keep context trimmed
+        db.set_pending_question(user.id, pending)
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=explanation,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=_action_keyboard(),
         )
 
 
