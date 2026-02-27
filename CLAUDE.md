@@ -38,29 +38,30 @@ for question generation and answer evaluation.
 
 ### `DeutschBotUsers-prod`
 PK: `user_id` (S)
-Fields: `username`, `first_name`, `created_at`, `is_paused` (0/1)
+Fields: `username`, `first_name`, `created_at`, `is_paused` (0/1), `last_active`, `last_reminder_sent`, `current_streak`, `last_streak_date`
 
 ### `DeutschBotSessions-prod`
 PK: `user_id` (S)
-Fields: `pending_question` (JSON string), `questions_sent`, `updated_at`, `ttl`
+Fields: `pending_question` (JSON string), `exam_state` (JSON string), `questions_sent`, `updated_at`, `ttl`
 
 ### `DeutschBotPerformance-prod`
 PK: `user_id` (S), SK: `topic_subtopic` (S, format: `"grammar#cases"`)
-Fields: `correct`, `incorrect` (incremented atomically with ADD), `difficulty` (Decimal 1–5), `last_tested`
+Fields: `correct`, `incorrect` (ADD atomically), `total_score`, `difficulty` (Decimal 1–5), `review_interval` (SRS days), `last_tested`
 
 ## Adaptive engine
 
-Weight formula: `base_weight × (1 + error_rate²)`
-- Unseen subtopics default to 50% error rate so they get explored
+Weight formula: `base_weight × (1 + error_rate²) × srs_factor`
+- Unseen subtopics default to 50% error rate so they get explored early
 - Difficulty: starts at 2.0, +0.5 on correct, -0.75 on wrong, clamped [1.0, 5.0]
 - Base weights: grammar=3, vocabulary=3, reading=2, writing=1.5
+- SRS: review_interval doubles on correct (1→2→4→…→30d), resets to 1d on wrong
+- srs_factor: `1.0 + min(overdue_days, 14) × 0.3` (never-tested = 2.0)
 
 ## Deployed stack (prod)
 
 - Region: `us-east-1`
 - Stack: `deutsch-telc-bot-prod`
 - Lambda: `DeutschTelcBot-prod`
-- Webhook: `https://zs8hd2qa28.execute-api.us-east-1.amazonaws.com/prod/webhook`
 - Logs: `/aws/lambda/DeutschTelcBot-prod`
 
 ## Local dev
