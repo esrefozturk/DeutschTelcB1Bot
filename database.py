@@ -28,11 +28,12 @@ class Database:
                 );
 
                 CREATE TABLE IF NOT EXISTS sessions (
-                    user_id          INTEGER PRIMARY KEY,
-                    pending_question TEXT,
-                    exam_state       TEXT,
-                    questions_sent   INTEGER DEFAULT 0,
-                    updated_at       TEXT DEFAULT (datetime('now'))
+                    user_id           INTEGER PRIMARY KEY,
+                    pending_question  TEXT,
+                    exam_state        TEXT,
+                    questions_sent    INTEGER DEFAULT 0,
+                    recent_questions  TEXT DEFAULT '[]',
+                    updated_at        TEXT DEFAULT (datetime('now'))
                 );
 
                 CREATE TABLE IF NOT EXISTS performance (
@@ -56,6 +57,7 @@ class Database:
                 "ALTER TABLE users ADD COLUMN current_streak INTEGER DEFAULT 0",
                 "ALTER TABLE users ADD COLUMN last_streak_date TEXT",
                 "ALTER TABLE sessions ADD COLUMN exam_state TEXT",
+                "ALTER TABLE sessions ADD COLUMN recent_questions TEXT DEFAULT '[]'",
             ]:
                 try:
                     conn.execute(stmt)
@@ -175,6 +177,37 @@ class Database:
                 (user_id,),
             ).fetchone()
             return row["questions_sent"] if row else 0
+
+    def get_recent_questions(self, user_id: int) -> list:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT recent_questions FROM sessions WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            if row and row["recent_questions"]:
+                try:
+                    return json.loads(row["recent_questions"])
+                except Exception:
+                    return []
+            return []
+
+    def add_recent_question(self, user_id: int, question_text: str, max_size: int = 25):
+        snippet = question_text[:100].strip()
+        recent  = self.get_recent_questions(user_id)
+        if snippet not in recent:
+            recent.append(snippet)
+        if len(recent) > max_size:
+            recent = recent[-max_size:]
+        payload = json.dumps(recent)
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO sessions (user_id, recent_questions)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET recent_questions = excluded.recent_questions
+                """,
+                (user_id, payload),
+            )
 
     # ── Performance ─────────────────────────────────────────────────────
 
