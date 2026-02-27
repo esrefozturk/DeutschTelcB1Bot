@@ -2,6 +2,7 @@
   <img src="logo.png" alt="DeutschTelcB1Bot" width="120">
   <h1>DeutschTelcB1Bot</h1>
   <p>Adaptive TELC B1 German exam preparation Telegram bot powered by Google Gemini AI.</p>
+  <img src="demo.gif" alt="DeutschTelcB1Bot demo" width="600">
 </div>
 
 ## Features
