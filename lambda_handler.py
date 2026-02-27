@@ -1,11 +1,9 @@
 """
 AWS Lambda entry point for the TELC B1 Telegram bot.
 
-Flow:
-  API Gateway POST /webhook  →  lambda_handler()
-    → parses the Telegram Update JSON
-    → dispatches through the same Application + handlers as bot.py
-    → returns HTTP 200 immediately
+Two trigger sources:
+  1. API Gateway POST /webhook   — Telegram update (normal bot flow)
+  2. EventBridge scheduled rules — reminder_type "inactivity" or "weekly"
 
 Key design decisions:
   • A single asyncio event loop and Application instance are created at cold-start
@@ -15,9 +13,11 @@ Key design decisions:
 """
 
 import asyncio
+import html
 import json
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 
@@ -42,8 +42,6 @@ from database_dynamo import DynamoDatabase
 from bot import (
     cmd_help,
     cmd_next,
-    cmd_pause,
-    cmd_resume,
     cmd_start,
     cmd_stats,
     cmd_topic,
@@ -57,10 +55,11 @@ logger.setLevel(logging.INFO)
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
+# How long without practice before we send a nudge, and how often we re-nudge
+INACTIVITY_HOURS   = 12
+REMINDER_COOLDOWN_HOURS = 24
+
 # ── One-time cold-start initialization ───────────────────────────────────────
-# Everything below runs once when Lambda loads the module (cold start).
-# On warm invocations the module is already in memory — skip straight to
-# lambda_handler().
 
 gemini_client.init_gemini(GEMINI_API_KEY)
 _db = DynamoDatabase()
@@ -72,8 +71,6 @@ async def _build_application() -> Application:
 
     app.add_handler(CommandHandler("start",  cmd_start))
     app.add_handler(CommandHandler("next",   cmd_next))
-    app.add_handler(CommandHandler("pause",  cmd_pause))
-    app.add_handler(CommandHandler("resume", cmd_resume))
     app.add_handler(CommandHandler("stats",  cmd_stats))
     app.add_handler(CommandHandler("topic",  cmd_topic))
     app.add_handler(CommandHandler("help",   cmd_help))
@@ -99,10 +96,16 @@ logger.info("Application initialized (cold start complete).")
 
 def lambda_handler(event: dict, context) -> dict:
     """
-    Receives an API Gateway proxy event and dispatches the Telegram update.
-    Always returns 200 — Telegram will retry on non-2xx, causing duplicate
-    processing, so we absorb all errors here and log them instead.
+    Handles both Telegram webhook events (from API Gateway) and scheduled
+    EventBridge events for reminders.
     """
+    # EventBridge scheduled event — no "body" key, has "reminder_type" instead
+    reminder_type = event.get("reminder_type")
+    if reminder_type:
+        _loop.run_until_complete(_run_reminders(reminder_type))
+        return _ok("reminders sent")
+
+    # Normal Telegram webhook
     body_raw = event.get("body") or ""
     if not body_raw:
         return _ok("no body")
@@ -122,9 +125,95 @@ async def _process(body: dict) -> None:
         update = Update.de_json(body, _application.bot)
         await _application.process_update(update)
     except Exception:
-        # Log but swallow — we must return 200 to Telegram to prevent
-        # infinite retry loops.
         logger.exception("Unhandled error processing update: %s", body)
+
+
+# ── Scheduled reminder logic ──────────────────────────────────────────────────
+
+
+async def _run_reminders(reminder_type: str) -> None:
+    bot  = _application.bot
+    now  = datetime.now(timezone.utc)
+    users = _db.get_all_users()
+    logger.info("Running '%s' reminder for %d users", reminder_type, len(users))
+
+    if reminder_type == "inactivity":
+        for user in users:
+            await _maybe_send_inactivity_nudge(bot, user, now)
+
+    elif reminder_type == "weekly":
+        for user in users:
+            await _maybe_send_weekly_summary(bot, user)
+
+
+async def _maybe_send_inactivity_nudge(bot, user: dict, now: datetime) -> None:
+    uid = user["user_id"]
+    last_active_str = user.get("last_active", "")
+    if not last_active_str:
+        return  # user has never been active
+
+    try:
+        last_active = datetime.fromisoformat(last_active_str)
+        inactive_h  = (now - last_active).total_seconds() / 3600
+        if inactive_h < INACTIVITY_HOURS:
+            return  # still recently active
+
+        # Respect cooldown — don't spam if already reminded recently
+        last_reminder_str = user.get("last_reminder_sent", "")
+        if last_reminder_str:
+            last_reminder = datetime.fromisoformat(last_reminder_str)
+            if (now - last_reminder).total_seconds() / 3600 < REMINDER_COOLDOWN_HOURS:
+                return
+
+        await bot.send_message(
+            chat_id=uid,
+            text=(
+                "👋 <b>Zeit zu üben!</b> You haven't practiced German in a while.\n\n"
+                "A quick session now will keep your skills sharp. "
+                "Type /next for your next question! 🇩🇪"
+            ),
+            parse_mode="HTML",
+        )
+        _db.mark_reminder_sent(uid)
+        logger.info("Sent inactivity nudge to user %s (inactive %.1fh)", uid, inactive_h)
+    except Exception as exc:
+        logger.warning("Inactivity nudge failed for user %s: %s", uid, exc)
+
+
+async def _maybe_send_weekly_summary(bot, user: dict) -> None:
+    uid = user["user_id"]
+    try:
+        s = _db.get_stats_summary(uid)
+        if s["total_questions"] < 3:
+            return  # not enough data for a meaningful summary
+
+        lines = [
+            "📅 <b>Your Weekly German Practice Check-in</b>",
+            "",
+            f"Questions answered (all time): <b>{s['total_questions']}</b>",
+            f"Accuracy: <b>{s['accuracy']}%</b>  |  Avg score: <b>{s['avg_score']}%</b>",
+            "",
+        ]
+        if s["weak_areas"]:
+            lines.append("🔴 <b>Focus areas for this week:</b>")
+            for w in s["weak_areas"]:
+                er       = round(w["error_rate"] * 100)
+                topic    = html.escape(w["topic"].replace("_", " "))
+                subtopic = html.escape(w["subtopic"].replace("_", " "))
+                lines.append(f"  • {topic} › {subtopic}  ({er}% errors)")
+        else:
+            lines.append("🟢 Great work — no major weak spots!")
+
+        lines += ["", "Keep it up! Type /next to practice now. 💪"]
+
+        await bot.send_message(
+            chat_id=uid,
+            text="\n".join(lines),
+            parse_mode="HTML",
+        )
+        logger.info("Sent weekly summary to user %s", uid)
+    except Exception as exc:
+        logger.warning("Weekly summary failed for user %s: %s", uid, exc)
 
 
 def _ok(msg: str = "OK") -> dict:

@@ -46,10 +46,11 @@ class DynamoDatabase:
         self._users.update_item(
             Key={"user_id": str(user_id)},
             UpdateExpression=(
-                "SET username   = :u, "
-                "    first_name = :f, "
-                "    created_at = if_not_exists(created_at, :now), "
-                "    is_paused  = if_not_exists(is_paused,  :zero)"
+                "SET username    = :u, "
+                "    first_name  = :f, "
+                "    created_at  = if_not_exists(created_at, :now), "
+                "    is_paused   = if_not_exists(is_paused,  :zero), "
+                "    last_active = :now"
             ),
             ExpressionAttributeValues={
                 ":u":    username,
@@ -57,6 +58,31 @@ class DynamoDatabase:
                 ":now":  _now(),
                 ":zero": 0,
             },
+        )
+
+    def get_all_users(self) -> List[Dict]:
+        """Scan all users. Only used for scheduled reminders (low frequency)."""
+        result = []
+        scan_kwargs: dict = {}
+        while True:
+            resp = self._users.scan(**scan_kwargs)
+            for item in resp.get("Items", []):
+                result.append({
+                    "user_id":            int(item["user_id"]),
+                    "first_name":         item.get("first_name", ""),
+                    "last_active":        item.get("last_active", ""),
+                    "last_reminder_sent": item.get("last_reminder_sent", ""),
+                })
+            if "LastEvaluatedKey" not in resp:
+                break
+            scan_kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+        return result
+
+    def mark_reminder_sent(self, user_id: int):
+        self._users.update_item(
+            Key={"user_id": str(user_id)},
+            UpdateExpression="SET last_reminder_sent = :now",
+            ExpressionAttributeValues={":now": _now()},
         )
 
     def get_user(self, user_id: int) -> Optional[Dict]:

@@ -26,7 +26,7 @@ Parameters:
 Globals:
   Function:
     Runtime: python3.12
-    Timeout: 45          # Gemini can be slow on first call
+    Timeout: 120         # Gemini can be slow; reminder runs loop over all users
     MemorySize: 512      # Enough headroom for the ML libraries
     Environment:
       Variables:
@@ -62,6 +62,41 @@ Resources:
             RestApiId: !Ref BotApi
             Path: /webhook
             Method: POST
+
+        # Inactivity nudge: every 4 hours between 10:00-22:00 UTC
+        # Sends a message if user hasn't practiced in 12+ hours
+        InactivityCheck10:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 10 * * ? *)
+            Description: "Inactivity nudge at 10:00 UTC"
+            Input: '{"reminder_type": "inactivity"}'
+        InactivityCheck14:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 14 * * ? *)
+            Description: "Inactivity nudge at 14:00 UTC"
+            Input: '{"reminder_type": "inactivity"}'
+        InactivityCheck18:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 18 * * ? *)
+            Description: "Inactivity nudge at 18:00 UTC"
+            Input: '{"reminder_type": "inactivity"}'
+        InactivityCheck22:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 22 * * ? *)
+            Description: "Inactivity nudge at 22:00 UTC"
+            Input: '{"reminder_type": "inactivity"}'
+
+        # Weekly summary: every Sunday at 10:00 UTC
+        WeeklySummary:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 10 ? * SUN *)
+            Description: "Weekly progress summary on Sundays"
+            Input: '{"reminder_type": "weekly"}'
 
   # ── API Gateway ─────────────────────────────────────────────────────────
   BotApi:
