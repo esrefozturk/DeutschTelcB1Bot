@@ -23,7 +23,8 @@ MODEL = "gemini-1.5-flash"   # free tier: 15 RPM, 1 M tokens/day
 
 def init_gemini(api_key: str):
     global _client
-    _client = genai.Client(api_key=api_key)
+    # google-genai defaults to v1beta; gemini-1.5-flash is only on v1
+    _client = genai.Client(api_key=api_key, http_options={"api_version": "v1"})
 
 
 def _client_or_raise() -> genai.Client:
@@ -180,10 +181,9 @@ def _extract_json(text: str) -> Dict:
 
 
 def _gen_config() -> types.GenerateContentConfig:
-    return types.GenerateContentConfig(
-        temperature=0.9,
-        response_mime_type="application/json",
-    )
+    # response_mime_type (JSON mode) is v1beta-only; we use v1, so omit it.
+    # The prompts already instruct the model to return pure JSON.
+    return types.GenerateContentConfig(temperature=0.9)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
