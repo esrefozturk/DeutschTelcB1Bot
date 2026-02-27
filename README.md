@@ -8,8 +8,10 @@
 
 - **Adaptive questions** across all TELC B1 exam areas — difficulty adjusts to your level
 - **Spaced repetition (SRS)** — topics due for review surface more often; intervals double on correct answers
+- **Question deduplication** — the last 25 questions are remembered so repeats are avoided automatically
 - **Daily streaks** — practice every day, earn milestone badges at 3/7/14/30/50/100 days
-- **Hints** — tap 🔍 Get Hint for a nudge without seeing the answer (up to 2 per question)
+- **Hints** — tap 🔍 Get Hint for an instant nudge without seeing the answer (up to 2 per question, pre-generated)
+- **Voice answers** 🎤 — send a voice message instead of typing; Gemini transcribes and evaluates it in one call
 - **Explain More** — after any answer, get a deep AI explanation of the grammar rule
 - **Exam simulation** — `/exam` runs a balanced 20-question TELC B1 practice test with a graded summary
 - **Progress stats** — `/stats` shows accuracy, avg score, streak, and your top weak areas
@@ -107,6 +109,10 @@ The script will:
 
 ### Subsequent deploys (after code changes)
 
+Merging to `main` automatically deploys via GitHub Actions — no manual step needed.
+
+For manual deploys or self-hosted forks:
+
 ```bash
 ./deploy.sh --no-guided
 ```
@@ -131,14 +137,21 @@ aws logs tail /aws/lambda/DeutschTelcBot-prod --follow
 .
 ├── bot.py              # Telegram handlers + local polling entry point
 ├── lambda_handler.py   # AWS Lambda entry point (webhook + EventBridge)
-├── gemini_client.py    # Gemini API — question generation, evaluation, hints
+├── gemini_client.py    # Gemini API — question generation, evaluation, voice, hints
 ├── adaptive.py         # Adaptive learning engine — topic selection, SRS, difficulty
 ├── database.py         # SQLite backend (local dev)
 ├── database_dynamo.py  # DynamoDB backend (production)
 ├── template.yaml       # AWS SAM infrastructure definition
-├── deploy.sh           # One-command build + deploy + webhook registration
+├── deploy.sh           # One-command manual build + deploy + webhook registration
 ├── set_webhook.py      # Telegram webhook utility
 ├── requirements.txt    # Python dependencies
+├── ruff.toml           # Linter configuration
+├── .github/
+│   ├── workflows/
+│   │   ├── ci.yml      # PR checks: ruff lint + import sanity check
+│   │   └── deploy.yml  # Auto-deploy to Lambda on push to main
+│   ├── dependabot.yml  # Automated dependency updates
+│   └── ISSUE_TEMPLATE/ # Bug report + feature request forms
 └── .env.example        # Environment variable template
 ```
 
