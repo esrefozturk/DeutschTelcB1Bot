@@ -18,13 +18,13 @@ from adaptive import get_subtopic_description, difficulty_label
 
 # Module-level client — initialised once by init_gemini()
 _client: Optional[genai.Client] = None
-MODEL = "gemini-1.5-flash"   # free tier: 15 RPM, 1 M tokens/day
+MODEL = "gemini-2.0-flash"   # best model available; requires billing enabled on the GCP project
 
 
 def init_gemini(api_key: str):
     global _client
-    # google-genai defaults to v1beta; gemini-1.5-flash is only on v1
-    _client = genai.Client(api_key=api_key, http_options={"api_version": "v1"})
+    # Use default v1beta endpoint — all gemini-2.x models live there
+    _client = genai.Client(api_key=api_key)
 
 
 def _client_or_raise() -> genai.Client:
@@ -181,9 +181,10 @@ def _extract_json(text: str) -> Dict:
 
 
 def _gen_config() -> types.GenerateContentConfig:
-    # response_mime_type (JSON mode) is v1beta-only; we use v1, so omit it.
-    # The prompts already instruct the model to return pure JSON.
-    return types.GenerateContentConfig(temperature=0.9)
+    return types.GenerateContentConfig(
+        temperature=0.9,
+        response_mime_type="application/json",  # v1beta supports JSON mode
+    )
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
