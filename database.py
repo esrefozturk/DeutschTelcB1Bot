@@ -22,7 +22,6 @@ class Database:
                     username          TEXT,
                     first_name        TEXT,
                     created_at        TEXT DEFAULT (datetime('now')),
-                    is_paused         INTEGER DEFAULT 0,
                     current_streak    INTEGER DEFAULT 0,
                     last_streak_date  TEXT
                 );
@@ -84,13 +83,6 @@ class Database:
                 "SELECT * FROM users WHERE user_id = ?", (user_id,)
             ).fetchone()
             return dict(row) if row else None
-
-    def set_paused(self, user_id: int, paused: bool):
-        with self._conn() as conn:
-            conn.execute(
-                "UPDATE users SET is_paused = ? WHERE user_id = ?",
-                (int(paused), user_id),
-            )
 
     def update_streak(self, user_id: int) -> tuple[int, bool]:
         """

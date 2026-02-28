@@ -50,14 +50,12 @@ class DynamoDatabase:
                 "SET username    = :u, "
                 "    first_name  = :f, "
                 "    created_at  = if_not_exists(created_at, :now), "
-                "    is_paused   = if_not_exists(is_paused,  :zero), "
                 "    last_active = :now"
             ),
             ExpressionAttributeValues={
-                ":u":    username,
-                ":f":    first_name,
-                ":now":  _now(),
-                ":zero": 0,
+                ":u":   username,
+                ":f":   first_name,
+                ":now": _now(),
             },
         )
 
@@ -124,17 +122,9 @@ class DynamoDatabase:
             "user_id":        int(item["user_id"]),
             "username":       item.get("username", ""),
             "first_name":     item.get("first_name", ""),
-            "is_paused":      _int(item.get("is_paused", 0)),
             "created_at":     item.get("created_at", ""),
             "current_streak": _int(item.get("current_streak", 0)),
         }
-
-    def set_paused(self, user_id: int, paused: bool):
-        self._users.update_item(
-            Key={"user_id": str(user_id)},
-            UpdateExpression="SET is_paused = :v",
-            ExpressionAttributeValues={":v": int(paused)},
-        )
 
     # ── Sessions / Pending question ─────────────────────────────────────
 
