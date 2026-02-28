@@ -118,7 +118,7 @@ def _difficulty_stars(d: float) -> str:
     return "★" * filled + "☆" * (5 - filled)
 
 
-_MAX_HINTS = 2
+_MAX_HINTS = 1
 
 
 def _question_keyboard(question: dict, hint_count: int = 0) -> Optional[InlineKeyboardMarkup]:
@@ -133,7 +133,7 @@ def _question_keyboard(question: dict, hint_count: int = 0) -> Optional[InlineKe
         for opt in question["options"]:
             rows.append([InlineKeyboardButton(opt, callback_data=f"answer:{opt[0]}")])
     if hint_count < _MAX_HINTS:
-        label = "🔍 Get Hint" if hint_count == 0 else "🔍 Another Hint"
+        label = "🔍 Get Hint"
         rows.append([InlineKeyboardButton(label, callback_data="hint")])
     return InlineKeyboardMarkup(rows) if rows else None
 
