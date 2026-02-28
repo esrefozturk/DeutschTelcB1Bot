@@ -6,8 +6,8 @@ Two public coroutines:
   evaluate_answer(question_data, user_answer)                             -> dict
 
 Model fallback chain (paid tier-1, cheapest → backup):
-  1. gemini-2.0-flash      — $0.10/$0.40 per 1M tokens, 1 000 RPM
-  2. gemini-2.0-flash-lite — $0.075/$0.30 per 1M tokens, 4 000 RPM
+  1. gemini-2.0-flash-001      — $0.10/$0.40 per 1M tokens, 1 000 RPM
+  2. gemini-2.0-flash-lite-001 — $0.075/$0.30 per 1M tokens, 4 000 RPM
 
 If a model returns 429 (quota exhausted), the next one is tried automatically.
 """
@@ -31,8 +31,8 @@ _client: Optional[genai.Client] = None
 # Fallback chain: primary first, then fallbacks in order.
 # Both are paid-tier models — 3-6x cheaper than gemini-2.5-flash.
 MODELS: List[str] = [
-    "gemini-2.0-flash",       # $0.10/$0.40 per 1M tokens, 1 000 RPM
-    "gemini-2.0-flash-lite",  # $0.075/$0.30 per 1M tokens, 4 000 RPM
+    "gemini-2.0-flash-001",       # $0.10/$0.40 per 1M tokens, 1 000 RPM
+    "gemini-2.0-flash-lite-001",  # $0.075/$0.30 per 1M tokens, 4 000 RPM
 ]
 
 
