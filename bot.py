@@ -85,7 +85,6 @@ HELP_MSG = (
     "<b>Answering</b>\n"
     "• For multiple-choice questions tap a button OR type A / B / C / D.\n"
     "• For all other types just type your answer freely.\n"
-    "• You can also send a <b>voice message</b> 🎤 — it will be transcribed and evaluated.\n"
     "• Minor spelling mistakes are OK; grammar concepts are graded strictly."
 )
 
@@ -877,7 +876,6 @@ def main():
     app.add_handler(CommandHandler("topic",  cmd_topic))
     app.add_handler(CommandHandler("help",   cmd_help))
     app.add_handler(CallbackQueryHandler(on_callback))
-    app.add_handler(MessageHandler(filters.VOICE, on_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 
     logger.info("Bot is running…")
