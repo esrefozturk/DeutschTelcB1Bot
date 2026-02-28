@@ -56,8 +56,7 @@ _QUESTION_SCHEMA = """
   "options":       ["A) ...", "B) ...", "C) ...", "D) ..."],
   "correct_answer": "<the exact correct answer or the letter A/B/C/D for multiple choice>",
   "explanation":   "<1-2 sentences explaining the rule or meaning in English>",
-  "hint_1":        "<a gentle first hint that nudges the learner without revealing the answer>",
-  "hint_2":        "<a stronger second hint, more specific but still not giving the answer away>",
+  "hint_1":        "<a gentle hint that nudges the learner without revealing the answer>",
   "topic":         "<topic string>",
   "subtopic":      "<subtopic string>",
   "difficulty":    <number 1-5>
