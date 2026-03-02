@@ -109,7 +109,11 @@ def _build_question_prompt(
         "sentence_building": (
             "Provide a scrambled set of German words (comma-separated) that the learner "
             "must arrange into a correct sentence. "
-            "The correct_answer is the properly ordered sentence."
+            "The correct_answer is the properly ordered sentence. "
+            "IMPORTANT: each token in the scramble must appear exactly as it will in the "
+            "final sentence — do NOT split compound nouns (e.g. provide 'Kunstausstellungen' "
+            "as one token, never as 'Kunst' and 'Ausstellungen' separately). "
+            "The learner should only need to reorder words, not merge or split them."
         ),
         "short_answer": (
             "Ask an open-ended question about a short German text or scenario. "
@@ -333,6 +337,19 @@ async def generate_question(
             if len(opt) > 2 and opt[1] in ") .":  # strip "A) " / "A. " prefix
                 opt = opt[2:].strip()
             data["correct_answer"] = opt
+
+    # Validate sentence_building questions: every scrambled token must appear
+    # verbatim (case-insensitive) in the correct answer.  If a token is missing
+    # the model likely split a compound noun — discard and retry.
+    if data.get("question_type") == "sentence_building":
+        answer_lower = data.get("correct_answer", "").lower()
+        tokens = [t.strip() for t in data.get("question", "").split(",") if t.strip()]
+        bad = [t for t in tokens if t.lower() not in answer_lower]
+        if bad:
+            raise ValueError(
+                f"sentence_building scramble contains tokens not found in correct_answer "
+                f"(likely split compound noun): {bad!r}"
+            )
 
     # Validate reading comprehension questions: the question field must contain
     # the passage text.  A short question field means the model forgot to include
