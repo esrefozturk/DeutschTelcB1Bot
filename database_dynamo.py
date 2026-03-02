@@ -72,6 +72,7 @@ class DynamoDatabase:
                     "last_active":        item.get("last_active", ""),
                     "last_reminder_sent": item.get("last_reminder_sent", ""),
                     "current_streak":     _int(item.get("current_streak", 0)),
+                    "is_paused":          _int(item.get("is_paused", 0)),
                 })
             if "LastEvaluatedKey" not in resp:
                 break
@@ -83,6 +84,13 @@ class DynamoDatabase:
             Key={"user_id": str(user_id)},
             UpdateExpression="SET last_reminder_sent = :now",
             ExpressionAttributeValues={":now": _now()},
+        )
+
+    def set_paused(self, user_id: int, paused: bool):
+        self._users.update_item(
+            Key={"user_id": str(user_id)},
+            UpdateExpression="SET is_paused = :v",
+            ExpressionAttributeValues={":v": int(paused)},
         )
 
     def update_streak(self, user_id: int) -> tuple[int, bool]:
@@ -108,8 +116,8 @@ class DynamoDatabase:
         new_streak = (current_streak + 1) if last_date == yesterday else 1
         self._users.update_item(
             Key={"user_id": str(user_id)},
-            UpdateExpression="SET current_streak = :s, last_streak_date = :d",
-            ExpressionAttributeValues={":s": new_streak, ":d": today},
+            UpdateExpression="SET current_streak = :s, last_streak_date = :d, is_paused = :zero",
+            ExpressionAttributeValues={":s": new_streak, ":d": today, ":zero": 0},
         )
         return new_streak, True
 

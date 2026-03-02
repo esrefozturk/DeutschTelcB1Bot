@@ -57,6 +57,7 @@ class Database:
                 "ALTER TABLE users ADD COLUMN last_streak_date TEXT",
                 "ALTER TABLE sessions ADD COLUMN exam_state TEXT",
                 "ALTER TABLE sessions ADD COLUMN recent_questions TEXT DEFAULT '[]'",
+                "ALTER TABLE users ADD COLUMN is_paused INTEGER DEFAULT 0",
             ]:
                 try:
                     conn.execute(stmt)
@@ -109,10 +110,17 @@ class Database:
 
             new_streak = (current_streak + 1) if last_date == yesterday else 1
             conn.execute(
-                "UPDATE users SET current_streak = ?, last_streak_date = ? WHERE user_id = ?",
+                "UPDATE users SET current_streak = ?, last_streak_date = ?, is_paused = 0 WHERE user_id = ?",
                 (new_streak, today, user_id),
             )
             return new_streak, True
+
+    def set_paused(self, user_id: int, paused: bool):
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE users SET is_paused = ? WHERE user_id = ?",
+                (int(paused), user_id),
+            )
 
     # ── Sessions / Pending question ─────────────────────────────────────
 
