@@ -192,7 +192,7 @@ _EVAL_SCHEMA = """
   "is_correct":  <true | false>,
   "score":       <0.0 – 1.0>,
   "feedback":    "<encouraging, constructive feedback in English — 1-3 sentences>",
-  "correction":  "<corrected answer with brief explanation, only include if is_correct is false>"
+  "correction":  "<PLAIN STRING — corrected answer with brief explanation in one string, only include if is_correct is false. Do NOT nest objects here.>"
 }
 """.strip()
 
@@ -403,6 +403,16 @@ async def evaluate_answer(question_data: Dict, user_answer: str) -> Dict:
     data.setdefault("is_correct", False)
     data.setdefault("score",      0.0)
     data.setdefault("feedback",   "")
+    # Gemini occasionally returns `correction` as a nested dict instead of a
+    # plain string.  Flatten it so the bot doesn't display a raw Python object.
+    correction = data.get("correction")
+    if isinstance(correction, dict):
+        parts = []
+        if correction.get("corrected_answer"):
+            parts.append(correction["corrected_answer"])
+        if correction.get("explanation"):
+            parts.append(f"({correction['explanation']})")
+        data["correction"] = " ".join(parts)
     return data
 
 
