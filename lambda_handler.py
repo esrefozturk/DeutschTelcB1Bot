@@ -208,6 +208,8 @@ async def _maybe_send_inactivity_nudge(bot, user: dict, now: datetime) -> None:
 
 async def _maybe_send_weekly_summary(bot, user: dict) -> None:
     uid = user["user_id"]
+    if user.get("is_paused"):
+        return
     try:
         s = _db.get_stats_summary(uid)
         if s["total_questions"] < 3:
