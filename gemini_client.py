@@ -104,7 +104,17 @@ def _build_question_prompt(
             "Set 'options' to an empty array []. "
             "Only change the minimum necessary to fix the error — do not add words, "
             "restructure, or rephrase the sentence beyond what the fix requires. "
-            "Double-check: the question sentence and correct_answer must differ by exactly the one error."
+            "Double-check: the question sentence and correct_answer must differ by exactly the one error. "
+            "CRITICAL — the error must be UNAMBIGUOUSLY wrong: a native speaker would immediately "
+            "flag it as a grammatical mistake with no room for debate. "
+            "Good error types: wrong case ending (e.g. 'mit dem Mann' → 'mit der Mann'), "
+            "wrong Perfekt auxiliary (haben/sein), wrong past participle form, "
+            "wrong adjective ending, verb not in second position in a main clause, "
+            "wrong separable prefix placement, wrong reflexive pronoun. "
+            "FORBIDDEN error types (do NOT use these — they are ambiguous or stylistically valid): "
+            "mixing Indikativ and Konjunktiv II when both moods are contextually defensible, "
+            "'gerne' vs 'gern' (both correct), word order variations that are regionally accepted, "
+            "any change where a native speaker might say 'both are fine'."
         ),
         "sentence_building": (
             "Provide a scrambled set of German words (comma-separated) that the learner "
