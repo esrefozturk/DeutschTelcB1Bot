@@ -22,6 +22,11 @@ Parameters:
     AllowedValues: [prod, staging]
     Description: "Deployment stage"
 
+  AdminChatId:
+    Type: String
+    Default: ""
+    Description: "Telegram user_id of the admin who receives quota requests"
+
 # ── Globals ───────────────────────────────────────────────────────────────────
 Globals:
   Function:
@@ -32,6 +37,7 @@ Globals:
       Variables:
         TELEGRAM_TOKEN:    !Ref TelegramToken
         GEMINI_API_KEY:    !Ref GeminiApiKey
+        ADMIN_CHAT_ID:     !Ref AdminChatId
         USERS_TABLE:       !Ref UsersTable
         SESSIONS_TABLE:    !Ref SessionsTable
         PERFORMANCE_TABLE: !Ref PerformanceTable

@@ -58,6 +58,9 @@ class Database:
                 "ALTER TABLE sessions ADD COLUMN exam_state TEXT",
                 "ALTER TABLE sessions ADD COLUMN recent_questions TEXT DEFAULT '[]'",
                 "ALTER TABLE users ADD COLUMN is_paused INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN tier TEXT DEFAULT 'default'",
+                "ALTER TABLE users ADD COLUMN questions_today INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN last_question_date TEXT",
             ]:
                 try:
                     conn.execute(stmt)
@@ -121,6 +124,37 @@ class Database:
                 "UPDATE users SET is_paused = ? WHERE user_id = ?",
                 (int(paused), user_id),
             )
+
+    def get_daily_usage(self, user_id: int) -> int:
+        today = datetime.now(timezone.utc).date().isoformat()
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT questions_today, last_question_date FROM users WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            if not row or row["last_question_date"] != today:
+                return 0
+            return row["questions_today"] or 0
+
+    def increment_daily_usage(self, user_id: int):
+        today = datetime.now(timezone.utc).date().isoformat()
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT last_question_date FROM users WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            if not row:
+                return
+            if row["last_question_date"] != today:
+                conn.execute(
+                    "UPDATE users SET questions_today = 1, last_question_date = ? WHERE user_id = ?",
+                    (today, user_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE users SET questions_today = questions_today + 1 WHERE user_id = ?",
+                    (user_id,),
+                )
 
     # ── Sessions / Pending question ─────────────────────────────────────
 
