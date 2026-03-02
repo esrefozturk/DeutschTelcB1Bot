@@ -217,6 +217,26 @@ async def _send_question(
     forced_subtopic: Optional[str] = None,
     is_first: bool = False,
 ):
+    # Single quota enforcement point — all paths go through _send_question.
+    user_data = db.get_user(user_id)
+    limit = _daily_limit(user_data)
+    if limit != -1:
+        used = db.get_daily_usage(user_id)
+        if used >= limit:
+            streak = (user_data or {}).get("current_streak", 0)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"📊 You've reached your limit of <b>{limit}</b> question{'s' if limit != 1 else ''} for today.\n\n"
+                    f"Your current streak is <b>{streak} day{'s' if streak != 1 else ''}</b> — "
+                    f"practice every day to grow your streak and unlock more questions.\n\n"
+                    "Limit resets at <b>midnight UTC</b>.\n\n"
+                    "Need more? Type /request-more-quota to send us a request."
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
     performance = db.get_all_performance(user_id)
 
     if forced_topic and forced_subtopic:
@@ -556,21 +576,6 @@ async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db: Database = context.bot_data["db"]
     user = update.effective_user
     db.upsert_user(user.id, user.username or "", user.first_name or "")
-
-    user_data = db.get_user(user.id)
-    limit = _daily_limit(user_data)
-    if limit != -1:
-        used = db.get_daily_usage(user.id)
-        if used >= limit:
-            streak = (user_data or {}).get("current_streak", 0)
-            await update.message.reply_text(
-                f"📊 You've reached your limit of <b>{limit}</b> question{'s' if limit != 1 else ''} for today.\n\n"
-                f"Your current streak is <b>{streak} day{'s' if streak != 1 else ''}</b> — "
-                f"practice every day to grow your streak and unlock more questions.\n\n"
-                "Need more? Type /request-more-quota to send us a request.",
-                parse_mode=ParseMode.HTML,
-            )
-            return
 
     db.set_exam_state(user.id, None)
     db.set_pending_question(user.id, None)
