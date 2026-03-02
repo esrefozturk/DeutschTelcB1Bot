@@ -206,8 +206,11 @@ def _build_exam_plan(performance: Optional[list] = None) -> dict:
     plan = []
     for topic, count in _EXAM_DISTRIBUTION:
         subtopics = list(TOPICS[topic]["subtopics"].keys())
-        for i in range(count):
-            subtopic   = subtopics[i % len(subtopics)]
+        # Sample without replacement up to `count`; fill remainder randomly.
+        chosen = random.sample(subtopics, min(count, len(subtopics)))
+        if count > len(subtopics):
+            chosen += random.choices(subtopics, k=count - len(subtopics))
+        for subtopic in chosen:
             q_type     = random.choice(QUESTION_TYPES_BY_TOPIC[topic])
             raw_diff   = perf_map.get((topic, subtopic), 2.5)
             difficulty = max(_EXAM_MIN_DIFFICULTY, min(_EXAM_MAX_DIFFICULTY, raw_diff))
