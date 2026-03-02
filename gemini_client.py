@@ -228,7 +228,10 @@ class GeminiQuotaExceeded(Exception):
 
 def _is_quota_error(exc: Exception) -> bool:
     msg = str(exc)
-    return "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower()
+    return (
+        "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower()
+        or "503" in msg or "UNAVAILABLE" in msg
+    )
 
 
 async def _call_with_fallback(prompt: str, config: Optional[types.GenerateContentConfig] = None) -> str:
