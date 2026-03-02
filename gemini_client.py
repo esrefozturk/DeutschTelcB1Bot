@@ -94,7 +94,10 @@ def _build_question_prompt(
         "error_correction": (
             "Write a German sentence that contains exactly ONE grammatical error. "
             "The learner must identify and correct it. "
-            "The correct_answer is the fully corrected sentence."
+            "The correct_answer is the full corrected sentence — never a single letter. "
+            "Set 'options' to an empty array []. "
+            "Only change the minimum necessary to fix the error — do not add words, "
+            "restructure, or rephrase the sentence beyond what the fix requires."
         ),
         "sentence_building": (
             "Provide a scrambled set of German words (comma-separated) that the learner "
@@ -165,6 +168,13 @@ def _build_eval_prompt(question_data: Dict, user_answer: str) -> str:
         leniency = (
             "Accept any answer that conveys the correct meaning, even if wording differs slightly. "
             "Be encouraging and highlight what was good even in partial answers."
+        )
+    elif q_type == "error_correction":
+        leniency = (
+            "Accept any answer that correctly fixes the same grammatical error, "
+            "even if the exact wording differs from the model answer. "
+            "The key is whether the learner identified and fixed the right grammatical "
+            "issue — not whether their corrected sentence matches word-for-word."
         )
 
     return f"""You are a German language teacher evaluating a TELC B1 learner's answer.
