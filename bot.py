@@ -17,7 +17,7 @@ import logging
 import os
 import random
 from textwrap import dedent
-from typing import Optional
+from typing import Dict, Optional
 
 from dotenv import load_dotenv
 from telegram import (
@@ -56,9 +56,10 @@ logger = logging.getLogger(__name__)
 # ── Config ────────────────────────────────────────────────────────────────────
 
 load_dotenv()
-TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
+TELEGRAM_TOKEN  = os.environ["TELEGRAM_TOKEN"]
 GEMINI_API_KEY  = os.environ["GEMINI_API_KEY"]
 DATABASE_PATH   = os.getenv("DATABASE_PATH", "deutsch_bot.db")
+ADMIN_CHAT_ID   = os.getenv("ADMIN_CHAT_ID")  # set in Lambda env / .env
 
 # ── Static messages (HTML) ────────────────────────────────────────────────────
 
@@ -82,6 +83,7 @@ HELP_MSG = (
     "/stats  – Your performance summary\n"
     "/topic  – Browse or focus on a topic\n"
     "/pause  – Stop daily reminders\n"
+    "/request-more-quota – Request more daily questions\n"
     "/help   – This message\n\n"
     "<b>Answering</b>\n"
     "• For multiple-choice questions tap a button OR type A / B / C / D.\n"
@@ -410,6 +412,12 @@ async def _record_answer(
     Updates performance/SRS, streak, exam state, stores answer context,
     and sends the feedback message with the appropriate action keyboard.
     """
+    # Charge quota on answer, not on question generation, so unanswered
+    # questions don't consume the daily allowance.
+    is_exam = pending.get("_exam_mode", False)
+    if not is_exam:
+        db.increment_daily_usage(user_id)
+
     is_correct = result.get("is_correct", False)
     score      = result.get("score", 0.0)
     feedback   = result.get("feedback", "")
@@ -441,7 +449,6 @@ async def _record_answer(
     )
 
     # Update streak (only in regular practice mode, not exam)
-    is_exam = pending.get("_exam_mode", False)
     if not is_exam:
         streak, is_new_day = db.update_streak(user_id)
         if is_new_day:
@@ -538,10 +545,33 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_question(db, user.id, update.effective_chat.id, context, is_first=True)
 
 
+def _daily_limit(user: Optional[Dict]) -> int:
+    """Returns -1 for unlimited, else the day's question cap (streak + 1)."""
+    if (user or {}).get("tier") == "unlimited":
+        return -1
+    return (user or {}).get("current_streak", 0) + 1
+
+
 async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db: Database = context.bot_data["db"]
     user = update.effective_user
     db.upsert_user(user.id, user.username or "", user.first_name or "")
+
+    user_data = db.get_user(user.id)
+    limit = _daily_limit(user_data)
+    if limit != -1:
+        used = db.get_daily_usage(user.id)
+        if used >= limit:
+            streak = (user_data or {}).get("current_streak", 0)
+            await update.message.reply_text(
+                f"📊 You've reached your limit of <b>{limit}</b> question{'s' if limit != 1 else ''} for today.\n\n"
+                f"Your current streak is <b>{streak} day{'s' if streak != 1 else ''}</b> — "
+                f"practice every day to grow your streak and unlock more questions.\n\n"
+                "Need more? Type /request-more-quota to send us a request.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
     db.set_exam_state(user.id, None)
     db.set_pending_question(user.id, None)
     await _send_question(db, user.id, update.effective_chat.id, context, is_first=True)
@@ -551,6 +581,15 @@ async def cmd_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db: Database = context.bot_data["db"]
     user = update.effective_user
     db.upsert_user(user.id, user.username or "", user.first_name or "")
+
+    user_data = db.get_user(user.id)
+    if (user_data or {}).get("tier") != "unlimited":
+        await update.message.reply_text(
+            "🔒 Exam mode requires unlimited access.\n\n"
+            "Use /next to continue practising, or /request-more-quota to ask for unlimited access.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
 
     exam_state = _build_exam_plan()
     db.set_exam_state(user.id, exam_state)
@@ -674,6 +713,51 @@ async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⏸ <b>Reminders paused.</b>\n\n"
         "You won't receive daily nudges anymore. "
         "They'll automatically resume the next time you answer a question.",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def cmd_request_more_quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db: Database = context.bot_data["db"]
+    user = update.effective_user
+    user_data = db.get_user(user.id)
+    streak = (user_data or {}).get("current_streak", 0)
+    limit  = _daily_limit(user_data)
+    used   = db.get_daily_usage(user.id)
+    user_msg = " ".join(context.args) if context.args else ""
+
+    if ADMIN_CHAT_ID:
+        try:
+            lines = [
+                "📬 <b>Quota request</b>",
+                "",
+                f"User: {html.escape(user.first_name or '')}",
+            ]
+            if user.username:
+                lines.append(f"Handle: @{html.escape(user.username)}")
+            lines += [
+                f"User ID: <code>{user.id}</code>",
+                f"Streak: {streak} day{'s' if streak != 1 else ''}",
+                f"Today: {used}/{limit if limit != -1 else '∞'} questions used",
+            ]
+            if user_msg:
+                lines += ["", f"Message: {html.escape(user_msg)}"]
+            lines += [
+                "",
+                f"To grant unlimited access, set <code>tier = unlimited</code> for "
+                f"<code>user_id = {user.id}</code> in DynamoDB.",
+            ]
+            await context.bot.send_message(
+                chat_id=int(ADMIN_CHAT_ID),
+                text="\n".join(lines),
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            logger.warning("Failed to notify admin of quota request from user %s", user.id)
+
+    await update.message.reply_text(
+        "✅ <b>Request sent!</b>\n\n"
+        "We'll review your request and get back to you shortly.",
         parse_mode=ParseMode.HTML,
     )
 
@@ -890,6 +974,7 @@ def main():
     app.add_handler(CommandHandler("topic",  cmd_topic))
     app.add_handler(CommandHandler("help",   cmd_help))
     app.add_handler(CommandHandler("pause",  cmd_pause))
+    app.add_handler(CommandHandler("request_more_quota", cmd_request_more_quota))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.VOICE, on_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))

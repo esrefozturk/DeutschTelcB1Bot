@@ -46,6 +46,7 @@ from bot import (
     cmd_help,
     cmd_next,
     cmd_pause,
+    cmd_request_more_quota,
     cmd_start,
     cmd_stats,
     cmd_topic,
@@ -86,6 +87,7 @@ async def _build_application() -> Application:
     app.add_handler(CommandHandler("topic",  cmd_topic))
     app.add_handler(CommandHandler("help",   cmd_help))
     app.add_handler(CommandHandler("pause",  cmd_pause))
+    app.add_handler(CommandHandler("request_more_quota", cmd_request_more_quota))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.VOICE, on_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))

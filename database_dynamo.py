@@ -132,7 +132,41 @@ class DynamoDatabase:
             "first_name":     item.get("first_name", ""),
             "created_at":     item.get("created_at", ""),
             "current_streak": _int(item.get("current_streak", 0)),
+            "tier":           item.get("tier", "default"),
         }
+
+    def get_daily_usage(self, user_id: int) -> int:
+        """Returns the number of questions asked today (UTC)."""
+        today = datetime.now(timezone.utc).date().isoformat()
+        resp  = self._users.get_item(
+            Key={"user_id": str(user_id)},
+            ProjectionExpression="questions_today, last_question_date",
+        )
+        item = resp.get("Item", {})
+        if item.get("last_question_date", "") != today:
+            return 0
+        return _int(item.get("questions_today", 0))
+
+    def increment_daily_usage(self, user_id: int):
+        """Increment today's question count, resetting if it's a new day."""
+        today = datetime.now(timezone.utc).date().isoformat()
+        resp  = self._users.get_item(
+            Key={"user_id": str(user_id)},
+            ProjectionExpression="last_question_date",
+        )
+        last_date = resp.get("Item", {}).get("last_question_date", "")
+        if last_date != today:
+            self._users.update_item(
+                Key={"user_id": str(user_id)},
+                UpdateExpression="SET questions_today = :one, last_question_date = :d",
+                ExpressionAttributeValues={":one": 1, ":d": today},
+            )
+        else:
+            self._users.update_item(
+                Key={"user_id": str(user_id)},
+                UpdateExpression="ADD questions_today :one",
+                ExpressionAttributeValues={":one": Decimal("1")},
+            )
 
     # ── Sessions / Pending question ─────────────────────────────────────
 
