@@ -104,6 +104,7 @@ def _build_question_prompt(
             "Set 'options' to an empty array []. "
             "Only change the minimum necessary to fix the error — do not add words, "
             "restructure, or rephrase the sentence beyond what the fix requires. "
+            "The corrected sentence must have EXACTLY the same number of words as the erroneous sentence. "
             "Double-check: the question sentence and correct_answer must differ by exactly the one error. "
             "CRITICAL — the error must be UNAMBIGUOUSLY wrong: a native speaker would immediately "
             "flag it as a grammatical mistake with no room for debate. "
@@ -374,9 +375,18 @@ async def generate_question(
 
     # Validate error_correction questions: if the question and correct_answer are
     # identical the model failed to introduce an actual error — discard silently.
+    # Also reject if word counts differ: all valid error types (wrong case ending,
+    # wrong auxiliary, wrong adjective ending, etc.) change one word's form, never
+    # add or remove words.  A word-count mismatch means the model rewrote content
+    # (e.g. "dessen Auto" → "den"), producing a semantically different sentence.
     if data.get("question_type") == "error_correction":
         q   = data.get("question", "").strip()
         ans = data.get("correct_answer", "").strip()
+        if len(q.split()) != len(ans.split()):
+            raise ValueError(
+                f"error_correction question and correct_answer have different word counts "
+                f"({len(q.split())} vs {len(ans.split())}), suggesting content was rewritten: {q!r} → {ans!r}"
+            )
         if q == ans or not data.get("error_introduced", "").strip():
             raise ValueError(
                 "error_correction question has no actual error "
