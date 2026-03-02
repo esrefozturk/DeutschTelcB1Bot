@@ -637,6 +637,16 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     streak = s.get("streak", 0)
     streak_line = f"🔥 Current streak: <b>{streak} day{'s' if streak != 1 else ''}</b>" if streak > 0 else ""
 
+    # Daily usage / limit line
+    user_data = db.get_user(user_id)
+    used  = db.get_daily_usage(user_id)
+    limit = _daily_limit(user_data)
+    if limit == -1:
+        quota_line = "Today: <b>unlimited</b> questions"
+    else:
+        remaining = max(0, limit - used)
+        quota_line = f"Today: <b>{used}/{limit}</b> questions used  ({remaining} remaining)"
+
     lines = [
         "📊 <b>Your Progress</b>",
         "",
@@ -646,6 +656,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     if streak_line:
         lines.append(streak_line)
+    lines.append(quota_line)
     lines += [
         "",
         "<i>Accuracy = fully correct answers. Avg score includes partial credit.</i>",
