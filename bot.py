@@ -80,6 +80,7 @@ HELP_MSG = (
     "/start  – Welcome message\n"
     "/next   – Get the next question now\n"
     "/exam   – 20-question TELC B1 practice test\n"
+    "/cancel – Cancel an exam in progress\n"
     "/stats  – Your performance summary\n"
     "/topic  – Browse or focus on a topic\n"
     "/pause  – Stop daily reminders\n"
@@ -745,6 +746,29 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(HELP_MSG, parse_mode=ParseMode.HTML)
 
 
+async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db: Database = context.bot_data["db"]
+    user = update.effective_user
+    exam_state = db.get_exam_state(user.id)
+
+    if not exam_state or not exam_state.get("active"):
+        await update.message.reply_text(
+            "No exam in progress. Type /exam to start one, or /next to practice.",
+        )
+        return
+
+    done  = exam_state.get("done", 0)
+    total = exam_state.get("total", 20)
+    db.set_exam_state(user.id, None)
+    db.set_pending_question(user.id, None)
+    await update.message.reply_text(
+        f"🛑 <b>Exam cancelled</b> ({done}/{total} questions completed).\n\n"
+        "Your progress has been discarded. Type /next to resume practice, "
+        "or /exam to start a new exam.",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db: Database = context.bot_data["db"]
     user = update.effective_user
@@ -1018,6 +1042,7 @@ def main():
     app.add_handler(CommandHandler("start",  cmd_start))
     app.add_handler(CommandHandler("next",   cmd_next))
     app.add_handler(CommandHandler("exam",   cmd_exam))
+    app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("stats",  cmd_stats))
     app.add_handler(CommandHandler("topic",  cmd_topic))
     app.add_handler(CommandHandler("help",   cmd_help))
