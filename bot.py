@@ -217,6 +217,27 @@ async def _send_question(
     forced_subtopic: Optional[str] = None,
     is_first: bool = False,
 ):
+    # Quota check — enforced here too since _send_question may be called
+    # automatically after answering, bypassing cmd_next's check.
+    user_data = db.get_user(user_id)
+    limit = _daily_limit(user_data)
+    if limit != -1:
+        used = db.get_daily_usage(user_id)
+        if used >= limit:
+            streak = (user_data or {}).get("current_streak", 0)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"📊 You've reached your limit of <b>{limit}</b> question{'s' if limit != 1 else ''} for today.\n\n"
+                    f"Your current streak is <b>{streak} day{'s' if streak != 1 else ''}</b> — "
+                    f"practice every day to grow your streak and unlock more questions.\n\n"
+                    "Limit resets at <b>midnight UTC</b>.\n\n"
+                    "Need more? Type /request-more-quota to send us a request."
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
     performance = db.get_all_performance(user_id)
 
     if forced_topic and forced_subtopic:
@@ -235,21 +256,35 @@ async def _send_question(
 
     avoided = db.get_recent_questions(user_id)
 
-    try:
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        question = await generate_question(topic, subtopic, q_type, difficulty, recent_ctx, avoided or None)
-    except GeminiQuotaExceeded:
+    question = None
+    for attempt in range(3):
+        try:
+            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            question = await generate_question(topic, subtopic, q_type, difficulty, recent_ctx, avoided or None)
+            break
+        except GeminiQuotaExceeded:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC. Try again then!",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        except ValueError as exc:
+            # Our own validation rejected the question (bad error_correction,
+            # missing reading passage, split compound, etc.) — retry silently.
+            logger.warning("Question validation failed (attempt %d/3): %s", attempt + 1, exc)
+        except Exception as exc:
+            logger.error("generate_question failed: %s", exc)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Couldn't generate a question right now. Try /next in a moment.",
+            )
+            return
+    if question is None:
+        logger.error("generate_question failed all 3 validation attempts for %s/%s", topic, subtopic)
         await context.bot.send_message(
             chat_id=chat_id,
-            text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC. Try again then!",
-            parse_mode=ParseMode.HTML,
-        )
-        return
-    except Exception as exc:
-        logger.error("generate_question failed: %s", exc)
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚠️ Couldn't generate a question right now. Try /next in a moment.",
+            text="⚠️ Couldn't generate a valid question right now. Try /next in a moment.",
         )
         return
 
@@ -567,6 +602,7 @@ async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📊 You've reached your limit of <b>{limit}</b> question{'s' if limit != 1 else ''} for today.\n\n"
                 f"Your current streak is <b>{streak} day{'s' if streak != 1 else ''}</b> — "
                 f"practice every day to grow your streak and unlock more questions.\n\n"
+                "Limit resets at <b>midnight UTC</b>.\n\n"
                 "Need more? Type /request-more-quota to send us a request.",
                 parse_mode=ParseMode.HTML,
             )
