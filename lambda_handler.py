@@ -45,6 +45,7 @@ from bot import (
     cmd_exam,
     cmd_help,
     cmd_next,
+    cmd_pause,
     cmd_start,
     cmd_stats,
     cmd_topic,
@@ -61,7 +62,7 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
 # How long without practice before we send a nudge, and how often we re-nudge
 INACTIVITY_HOURS        = 4
-REMINDER_COOLDOWN_HOURS = 4
+REMINDER_COOLDOWN_HOURS = 24
 
 # ── One-time cold-start initialization ───────────────────────────────────────
 
@@ -84,6 +85,7 @@ async def _build_application() -> Application:
     app.add_handler(CommandHandler("stats",  cmd_stats))
     app.add_handler(CommandHandler("topic",  cmd_topic))
     app.add_handler(CommandHandler("help",   cmd_help))
+    app.add_handler(CommandHandler("pause",  cmd_pause))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.VOICE, on_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
@@ -159,6 +161,10 @@ async def _run_reminders(reminder_type: str) -> None:
 
 async def _maybe_send_inactivity_nudge(bot, user: dict, now: datetime) -> None:
     uid = user["user_id"]
+
+    if user.get("is_paused"):
+        return  # user opted out of reminders
+
     last_active_str = user.get("last_active", "")
     if not last_active_str:
         return  # user has never been active
@@ -169,24 +175,28 @@ async def _maybe_send_inactivity_nudge(bot, user: dict, now: datetime) -> None:
         if inactive_h < INACTIVITY_HOURS:
             return  # still recently active
 
-        # Respect cooldown — don't spam if already reminded recently
+        # Respect cooldown — max one reminder per day
         last_reminder_str = user.get("last_reminder_sent", "")
         if last_reminder_str:
             last_reminder = datetime.fromisoformat(last_reminder_str)
             if (now - last_reminder).total_seconds() / 3600 < REMINDER_COOLDOWN_HOURS:
                 return
 
+        # Only show streak warning if they haven't already practiced today
         streak = user.get("current_streak", 0)
+        today  = now.date().isoformat()
+        already_practiced_today = last_active_str.startswith(today)
         streak_line = (
             f"\n\n⚠️ Don't break your <b>{streak}-day streak!</b>"
-            if streak > 1 else ""
+            if streak > 1 and not already_practiced_today else ""
         )
         await bot.send_message(
             chat_id=uid,
             text=(
                 "👋 <b>Zeit zu üben!</b> You haven't practiced German in a while.\n\n"
                 "A quick session now will keep your skills sharp. "
-                f"Type /next for your next question! 🇩🇪{streak_line}"
+                f"Type /next for your next question! 🇩🇪{streak_line}\n\n"
+                "<i>Don't want reminders? Type /pause to stop them.</i>"
             ),
             parse_mode="HTML",
         )

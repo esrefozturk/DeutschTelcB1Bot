@@ -81,6 +81,7 @@ HELP_MSG = (
     "/exam   – 20-question TELC B1 practice test\n"
     "/stats  – Your performance summary\n"
     "/topic  – Browse or focus on a topic\n"
+    "/pause  – Stop daily reminders\n"
     "/help   – This message\n\n"
     "<b>Answering</b>\n"
     "• For multiple-choice questions tap a button OR type A / B / C / D.\n"
@@ -665,6 +666,18 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(HELP_MSG, parse_mode=ParseMode.HTML)
 
 
+async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db: Database = context.bot_data["db"]
+    user = update.effective_user
+    db.set_paused(user.id, True)
+    await update.message.reply_text(
+        "⏸ <b>Reminders paused.</b>\n\n"
+        "You won't receive daily nudges anymore. "
+        "They'll automatically resume the next time you answer a question.",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 # ── Message handler (free-text answers) ──────────────────────────────────────
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -876,6 +889,7 @@ def main():
     app.add_handler(CommandHandler("stats",  cmd_stats))
     app.add_handler(CommandHandler("topic",  cmd_topic))
     app.add_handler(CommandHandler("help",   cmd_help))
+    app.add_handler(CommandHandler("pause",  cmd_pause))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.VOICE, on_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
