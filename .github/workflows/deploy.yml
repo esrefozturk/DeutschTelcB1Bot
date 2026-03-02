@@ -49,6 +49,7 @@ jobs:
             --parameter-overrides \
               TelegramToken="${{ secrets.TELEGRAM_TOKEN }}" \
               GeminiApiKey="${{ secrets.GEMINI_API_KEY }}" \
+              AdminChatId="${{ secrets.ADMIN_CHAT_ID }}" \
               Stage="prod" \
             --no-fail-on-empty-changeset \
             --no-confirm-changeset
