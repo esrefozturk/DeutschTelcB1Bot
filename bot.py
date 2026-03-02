@@ -255,21 +255,34 @@ async def _send_question(
 
     avoided = db.get_recent_questions(user_id)
 
-    try:
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        question = await generate_question(topic, subtopic, q_type, difficulty, recent_ctx, avoided or None)
-    except GeminiQuotaExceeded:
+    question = None
+    for attempt in range(3):
+        try:
+            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            question = await generate_question(topic, subtopic, q_type, difficulty, recent_ctx, avoided or None)
+            break
+        except GeminiQuotaExceeded:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC. Try again then!",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        except ValueError as exc:
+            # Our validators rejected the question — retry silently.
+            logger.warning("Question validation failed (attempt %d/3): %s", attempt + 1, exc)
+        except Exception as exc:
+            logger.error("generate_question failed: %s", exc)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Couldn't generate a question right now. Try /next in a moment.",
+            )
+            return
+    if question is None:
+        logger.error("generate_question failed all 3 validation attempts for %s/%s", topic, subtopic)
         await context.bot.send_message(
             chat_id=chat_id,
-            text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC. Try again then!",
-            parse_mode=ParseMode.HTML,
-        )
-        return
-    except Exception as exc:
-        logger.error("generate_question failed: %s", exc)
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚠️ Couldn't generate a question right now. Try /next in a moment.",
+            text="⚠️ Couldn't generate a valid question right now. Try /next in a moment.",
         )
         return
 
