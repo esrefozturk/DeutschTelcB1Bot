@@ -188,19 +188,34 @@ def _fmt_question(q: dict, is_first: bool = False, progress: str = "") -> str:
     return header + body
 
 
-def _build_exam_plan() -> dict:
-    """Build a balanced 20-question exam plan across all topic areas."""
+_EXAM_MIN_DIFFICULTY = 2.0  # floor — exam is never easier than elementary
+_EXAM_MAX_DIFFICULTY = 4.0  # ceiling — exam is never harder than upper-intermediate
+
+
+def _build_exam_plan(performance: Optional[list] = None) -> dict:
+    """Build a balanced 20-question exam plan across all topic areas.
+
+    Uses the user's actual per-subtopic difficulty from their practice history,
+    clamped to [_EXAM_MIN_DIFFICULTY, _EXAM_MAX_DIFFICULTY] so the exam stays
+    within a realistic B1 range. Falls back to 2.5 for unseen subtopics.
+    """
+    perf_map: Dict = {}
+    if performance:
+        perf_map = {(r["topic"], r["subtopic"]): r.get("difficulty", 2.5) for r in performance}
+
     plan = []
     for topic, count in _EXAM_DISTRIBUTION:
         subtopics = list(TOPICS[topic]["subtopics"].keys())
         for i in range(count):
-            subtopic = subtopics[i % len(subtopics)]
-            q_type   = random.choice(QUESTION_TYPES_BY_TOPIC[topic])
+            subtopic   = subtopics[i % len(subtopics)]
+            q_type     = random.choice(QUESTION_TYPES_BY_TOPIC[topic])
+            raw_diff   = perf_map.get((topic, subtopic), 2.5)
+            difficulty = max(_EXAM_MIN_DIFFICULTY, min(_EXAM_MAX_DIFFICULTY, raw_diff))
             plan.append({
                 "topic":      topic,
                 "subtopic":   subtopic,
                 "q_type":     q_type,
-                "difficulty": 2.5,  # standard B1 level for exam
+                "difficulty": difficulty,
             })
     random.shuffle(plan)
     return {"active": True, "total": 20, "done": 0, "plan": plan, "results": []}
@@ -620,7 +635,8 @@ async def cmd_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    exam_state = _build_exam_plan()
+    performance = db.get_all_performance(user.id)
+    exam_state = _build_exam_plan(performance)
     db.set_exam_state(user.id, exam_state)
     db.set_pending_question(user.id, None)
 
