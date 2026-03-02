@@ -122,7 +122,7 @@ def _difficulty_stars(d: float) -> str:
     return "★" * filled + "☆" * (5 - filled)
 
 
-_MAX_HINTS = 1
+_MAX_HINTS = 2
 
 
 def _question_keyboard(question: dict, hint_count: int = 0) -> Optional[InlineKeyboardMarkup]:

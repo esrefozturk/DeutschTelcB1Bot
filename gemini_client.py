@@ -59,6 +59,7 @@ _QUESTION_SCHEMA = """
   "error_introduced": "<error_correction only: describe the exact error you put in the sentence, e.g. 'wrong adjective ending: interessante → interessanten'; empty string for all other types>",
   "explanation":      "<1-2 sentences explaining the rule or meaning in English>",
   "hint_1":           "<a gentle hint that nudges the learner without revealing the answer>",
+  "hint_2":           "<a stronger follow-up hint that is more specific but still does NOT reveal the answer>",
   "topic":            "<topic string>",
   "subtopic":         "<subtopic string>",
   "difficulty":       <number 1-5>
