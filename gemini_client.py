@@ -118,6 +118,28 @@ def _build_question_prompt(
     }
 
     instruction   = type_instructions.get(question_type, "Create a question.")
+
+    # Reading comprehension questions MUST embed the source text.
+    # Without it the learner has nothing to read — they cannot answer.
+    if topic == "reading":
+        passage_types = {
+            "find_information": "a short notice, advertisement, or announcement (Anzeige/Bekanntmachung)",
+            "main_idea":        "a short newspaper article or blog post excerpt",
+            "inference":        "a short letter, email, or narrative passage",
+            "text_types":       "a short sample of the relevant text type (email, letter, instructions, or news article)",
+        }
+        passage_hint = passage_types.get(subtopic, "a short German text (4-8 sentences)")
+        instruction += (
+            f"\n\nCRITICAL — Reading comprehension requirement: "
+            f"The 'question' field MUST begin with the full German passage ({passage_hint}), "
+            f"followed by a blank line, followed by the comprehension question in German. "
+            f"Format exactly like this:\n"
+            f"  <German passage text here — 4 to 8 sentences>\n\n"
+            f"  <The actual question about the passage>\n\n"
+            f"Do NOT ask about a text that you have not included in the question field. "
+            f"The learner can only see the 'question' field — they have no other source."
+        )
+
     context_block = f"\n\nAvoid repeating these recently asked topics: {context}" if context else ""
 
     avoided_block = ""
@@ -311,6 +333,17 @@ async def generate_question(
             if len(opt) > 2 and opt[1] in ") .":  # strip "A) " / "A. " prefix
                 opt = opt[2:].strip()
             data["correct_answer"] = opt
+
+    # Validate reading comprehension questions: the question field must contain
+    # the passage text.  A short question field means the model forgot to include
+    # the text — discard and retry rather than showing a passage-less question.
+    if topic == "reading":
+        q_text = data.get("question", "")
+        # A passage + question should be at least ~150 chars; a bare question is ~60
+        if len(q_text) < 150:
+            raise ValueError(
+                f"reading question missing passage text (question field too short: {len(q_text)} chars): {q_text!r}"
+            )
 
     # Validate error_correction questions: if the question and correct_answer are
     # identical the model failed to introduce an actual error — discard silently.
