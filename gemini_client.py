@@ -50,15 +50,16 @@ def _client_or_raise() -> genai.Client:
 
 _QUESTION_SCHEMA = """
 {
-  "question":      "<the question text, in German or English as appropriate>",
-  "question_type": "<one of: multiple_choice | fill_blank | translation_to_german | translation_to_english | error_correction | sentence_building | short_answer>",
-  "options":       ["A) ...", "B) ...", "C) ...", "D) ..."],
-  "correct_answer": "<the exact correct answer or the letter A/B/C/D for multiple choice>",
-  "explanation":   "<1-2 sentences explaining the rule or meaning in English>",
-  "hint_1":        "<a gentle hint that nudges the learner without revealing the answer>",
-  "topic":         "<topic string>",
-  "subtopic":      "<subtopic string>",
-  "difficulty":    <number 1-5>
+  "question":         "<the question text, in German or English as appropriate>",
+  "question_type":    "<one of: multiple_choice | fill_blank | translation_to_german | translation_to_english | error_correction | sentence_building | short_answer>",
+  "options":          ["A) ...", "B) ...", "C) ...", "D) ..."],
+  "correct_answer":   "<the exact correct answer or the letter A/B/C/D for multiple choice>",
+  "error_introduced": "<error_correction only: describe the exact error you put in the sentence, e.g. 'wrong adjective ending: interessante → interessanten'; empty string for all other types>",
+  "explanation":      "<1-2 sentences explaining the rule or meaning in English>",
+  "hint_1":           "<a gentle hint that nudges the learner without revealing the answer>",
+  "topic":            "<topic string>",
+  "subtopic":         "<subtopic string>",
+  "difficulty":       <number 1-5>
 }
 """.strip()
 
@@ -92,12 +93,18 @@ def _build_question_prompt(
             "The correct_answer field contains the English translation."
         ),
         "error_correction": (
-            "Write a German sentence that contains exactly ONE grammatical error. "
+            "Write a German sentence that contains exactly ONE deliberate grammatical error. "
             "The learner must identify and correct it. "
+            "IMPORTANT: Before writing the sentence, decide on a specific grammatical error "
+            "you will introduce (e.g. wrong case ending, wrong verb form, wrong word order). "
+            "Then write a sentence with that error clearly present. "
+            "Fill 'error_introduced' with a short description of the exact error you introduced "
+            "(e.g. 'Perfekt formed with 'haben' instead of 'sein' for a motion verb'). "
             "The correct_answer is the full corrected sentence — never a single letter. "
             "Set 'options' to an empty array []. "
             "Only change the minimum necessary to fix the error — do not add words, "
-            "restructure, or rephrase the sentence beyond what the fix requires."
+            "restructure, or rephrase the sentence beyond what the fix requires. "
+            "Double-check: the question sentence and correct_answer must differ by exactly the one error."
         ),
         "sentence_building": (
             "Provide a scrambled set of German words (comma-separated) that the learner "
@@ -177,13 +184,17 @@ def _build_eval_prompt(question_data: Dict, user_answer: str) -> str:
             "issue — not whether their corrected sentence matches word-for-word."
         )
 
+    error_introduced_block = ""
+    if q_type == "error_correction" and question_data.get("error_introduced"):
+        error_introduced_block = f"\nThe intentional error in the question was: {question_data['error_introduced']}"
+
     return f"""You are a German language teacher evaluating a TELC B1 learner's answer.
 
 Question ({q_type}):
 {question_data.get('question', '')}
 {options_block}
 
-Expected correct answer: {question_data.get('correct_answer', '')}
+Expected correct answer: {question_data.get('correct_answer', '')}{error_introduced_block}
 
 Learner's answer: {user_answer}
 
@@ -297,6 +308,17 @@ async def generate_question(
             if len(opt) > 2 and opt[1] in ") .":  # strip "A) " / "A. " prefix
                 opt = opt[2:].strip()
             data["correct_answer"] = opt
+
+    # Validate error_correction questions: if the question and correct_answer are
+    # identical the model failed to introduce an actual error — discard silently.
+    if data.get("question_type") == "error_correction":
+        q   = data.get("question", "").strip()
+        ans = data.get("correct_answer", "").strip()
+        if q == ans or not data.get("error_introduced", "").strip():
+            raise ValueError(
+                "error_correction question has no actual error "
+                f"(question == correct_answer or error_introduced is empty): {q!r}"
+            )
 
     return data
 
