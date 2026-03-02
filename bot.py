@@ -83,7 +83,7 @@ HELP_MSG = (
     "/stats  – Your performance summary\n"
     "/topic  – Browse or focus on a topic\n"
     "/pause  – Stop daily reminders\n"
-    "/request-more-quota – Request more daily questions\n"
+    "/request_more_quota – Request more daily questions\n"
     "/help   – This message\n\n"
     "<b>Answering</b>\n"
     "• For multiple-choice questions tap a button OR type A / B / C / D.\n"
@@ -231,7 +231,7 @@ async def _send_question(
                     f"Your current streak is <b>{streak} day{'s' if streak != 1 else ''}</b> — "
                     f"practice every day to grow your streak and unlock more questions.\n\n"
                     "Limit resets at <b>midnight UTC</b>.\n\n"
-                    "Need more? Type /request-more-quota to send us a request."
+                    "Need more? Type /request_more_quota to send us a request."
                 ),
                 parse_mode=ParseMode.HTML,
             )
@@ -604,7 +604,7 @@ async def cmd_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if (user_data or {}).get("tier") != "unlimited":
         await update.message.reply_text(
             "🔒 Exam mode requires unlimited access.\n\n"
-            "Use /next to continue practising, or /request-more-quota to ask for unlimited access.",
+            "Use /next to continue practising, or /request_more_quota to ask for unlimited access.",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -743,6 +743,14 @@ async def cmd_request_more_quota(update: Update, context: ContextTypes.DEFAULT_T
     limit  = _daily_limit(user_data)
     used   = db.get_daily_usage(user.id)
     user_msg = " ".join(context.args) if context.args else ""
+
+    if not user_msg:
+        await update.message.reply_text(
+            "Please include a short message with your request.\n\n"
+            "Example: <code>/request_more_quota I have an exam next week and need more practice.</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
 
     if ADMIN_CHAT_ID:
         try:
