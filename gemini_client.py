@@ -95,6 +95,8 @@ def _build_question_prompt(
         "error_correction": (
             "Write a German sentence that contains exactly ONE deliberate grammatical error. "
             "The learner must identify and correct it. "
+            "IMPORTANT: A grammatical error means a FORM violation — wrong inflection, wrong "
+            "conjugation, wrong auxiliary, wrong word order — NOT a semantic or word-choice issue. "
             "IMPORTANT: Before writing the sentence, decide on a specific grammatical error "
             "you will introduce (e.g. wrong case ending, wrong verb form, wrong word order). "
             "Then write a sentence with that error clearly present. "
@@ -113,9 +115,12 @@ def _build_question_prompt(
             "wrong adjective ending, verb not in second position in a main clause, "
             "wrong separable prefix placement, wrong reflexive pronoun. "
             "FORBIDDEN error types (do NOT use these — they are ambiguous or stylistically valid): "
+            "modal verb substitution where both verbs are grammatically valid in context "
+            "(e.g. replacing 'muss' with 'darf' or 'soll' — these change meaning, not grammar), "
             "mixing Indikativ and Konjunktiv II when both moods are contextually defensible, "
             "'gerne' vs 'gern' (both correct), word order variations that are regionally accepted, "
-            "any change where a native speaker might say 'both are fine'. "
+            "any change where a native speaker might say 'both are fine', "
+            "any change that makes the sentence semantically odd rather than grammatically wrong. "
             "CRITICAL — the 'question' field must contain ONLY the erroneous German sentence itself. "
             "Do NOT include any instruction text, preamble, or phrases like "
             "'Korrigieren Sie den Fehler im folgenden Satz:' — just the raw sentence."
@@ -321,6 +326,51 @@ async def _call_with_fallback(prompt: str, config: Optional[types.GenerateConten
     raise GeminiQuotaExceeded("All models exhausted their daily quota.") from last_exc
 
 
+# ── Validators ────────────────────────────────────────────────────────────────
+
+async def _verify_error_correction(q: str, ans: str, error_introduced: str) -> None:
+    """Second-opinion check: confirm the question sentence has a real grammar error.
+
+    Prompts Gemini to distinguish genuine form violations (wrong case ending,
+    wrong auxiliary, wrong conjugation, wrong word order) from semantic swaps
+    (e.g. müssen → dürfen) that are grammatically valid in context.
+    Raises ValueError if the sentence appears already correct, triggering a retry.
+    """
+    prompt = (
+        "You are a strict German grammar checker.\n\n"
+        f'Does this German sentence contain a real grammatical error?\n\nSentence: "{q}"\n'
+        f'Claimed error: "{error_introduced}"\n'
+        f'Supposedly corrected to: "{ans}"\n\n'
+        "A REAL grammatical error is a FORM violation:\n"
+        "- Wrong case ending (Nominativ/Akkusativ/Dativ/Genitiv)\n"
+        "- Wrong verb conjugation (person, number, tense)\n"
+        "- Wrong Perfekt auxiliary (haben vs sein)\n"
+        "- Wrong word order (e.g. verb not in V2 position)\n"
+        "- Wrong separable prefix placement\n"
+        "- Wrong adjective ending\n\n"
+        "NOT a real grammatical error:\n"
+        "- Swapping one modal verb for another when both are grammatically valid "
+        "(e.g. 'muss' → 'darf' — both are correct modal verb forms; only meaning differs)\n"
+        "- Any word substitution where both words are correctly inflected in context\n"
+        "- Stylistic or register differences\n\n"
+        'Return ONLY this JSON: {"has_real_error": true/false, "reason": "<one sentence>"}'
+    )
+    try:
+        text   = await _call_with_fallback(prompt, config=_gen_config())
+        result = _extract_json(text)
+        if not result.get("has_real_error", True):
+            raise ValueError(
+                f"error_correction sentence has no real grammatical error "
+                f"(only a semantic/meaning difference): {q!r} — "
+                f"validator: {result.get('reason', '')}"
+            )
+    except ValueError:
+        raise
+    except Exception as exc:
+        # Parsing failure or network issue — don't block question generation.
+        logger.warning("_verify_error_correction check failed (letting through): %s", exc)
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 async def generate_question(
@@ -415,6 +465,9 @@ async def generate_question(
                 "error_correction question has no actual error "
                 f"(question == correct_answer or error_introduced is empty): {q!r}"
             )
+        # Second-opinion check: verify the sentence actually has a real grammar error,
+        # not just a semantic/meaning substitution (e.g. muss → darf).
+        await _verify_error_correction(q, ans, data.get("error_introduced", ""))
 
     return data
 
