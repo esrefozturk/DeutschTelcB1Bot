@@ -115,7 +115,10 @@ def _build_question_prompt(
             "FORBIDDEN error types (do NOT use these — they are ambiguous or stylistically valid): "
             "mixing Indikativ and Konjunktiv II when both moods are contextually defensible, "
             "'gerne' vs 'gern' (both correct), word order variations that are regionally accepted, "
-            "any change where a native speaker might say 'both are fine'."
+            "any change where a native speaker might say 'both are fine'. "
+            "CRITICAL — the 'question' field must contain ONLY the erroneous German sentence itself. "
+            "Do NOT include any instruction text, preamble, or phrases like "
+            "'Korrigieren Sie den Fehler im folgenden Satz:' — just the raw sentence."
         ),
         "sentence_building": (
             "Provide a scrambled set of German words (comma-separated) that the learner "
@@ -124,7 +127,10 @@ def _build_question_prompt(
             "IMPORTANT: each token in the scramble must appear exactly as it will in the "
             "final sentence — do NOT split compound nouns (e.g. provide 'Kunstausstellungen' "
             "as one token, never as 'Kunst' and 'Ausstellungen' separately). "
-            "The learner should only need to reorder words, not merge or split them."
+            "The learner should only need to reorder words, not merge or split them. "
+            "CRITICAL — the 'question' field must contain ONLY the comma-separated word list. "
+            "Do NOT include any instruction text, preamble, or phrases like "
+            "'Ordnen Sie die folgenden Wörter zu einem korrekten Satz:' — just the raw word list."
         ),
         "short_answer": (
             "Ask an open-ended question about a short German text or scenario. "
@@ -330,6 +336,19 @@ async def generate_question(
     data["topic"]    = topic
     data["subtopic"] = subtopic
     data.setdefault("difficulty", difficulty)
+
+    # Fix: Gemini sometimes prepends a German instruction phrase to the question
+    # field for sentence_building ("Ordnen Sie die folgenden Wörter zu einem
+    # korrekten Satz: ...") and error_correction ("Korrigieren Sie den Fehler im
+    # folgenden Satz: ...").  Strip it so validation and display are not broken.
+    q_type = data.get("question_type", "")
+    if q_type in ("sentence_building", "error_correction"):
+        q_text = data.get("question", "")
+        # Match a German instruction prefix of 5-100 chars ending with ": "
+        stripped = re.sub(r'^[A-ZÄÖÜ][^:]{4,99}:\s+', '', q_text)
+        if stripped and stripped != q_text:
+            logger.info("Stripped instruction prefix from %s question", q_type)
+            data["question"] = stripped
 
     # Fix: for non-MC question types, Gemini occasionally generates options AND
     # sets correct_answer to a letter ("A"/"B"/…) instead of the actual answer
