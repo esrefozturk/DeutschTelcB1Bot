@@ -281,11 +281,15 @@ class GeminiQuotaExceeded(Exception):
 
 
 def _is_quota_error(exc: Exception) -> bool:
+    """Return True only for genuine quota-exhaustion errors (HTTP 429).
+
+    503 UNAVAILABLE is a transient server error, not a quota error — treating
+    it as quota exhaustion causes the bot to tell users their daily limit is
+    reached and to burn through the model fallback chain on a simple blip.
+    503s are allowed to bubble up so the caller can show a generic retry message.
+    """
     msg = str(exc)
-    return (
-        "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower()
-        or "503" in msg or "UNAVAILABLE" in msg
-    )
+    return "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower()
 
 
 async def _call_with_fallback(prompt: str, config: Optional[types.GenerateContentConfig] = None) -> str:
