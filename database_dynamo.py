@@ -110,14 +110,21 @@ class DynamoDatabase:
         last_date      = item.get("last_streak_date", "")
         current_streak = _int(item.get("current_streak", 0))
 
+        # Always clear is_paused — answering any question resumes reminders.
+        self._users.update_item(
+            Key={"user_id": str(user_id)},
+            UpdateExpression="SET is_paused = :zero",
+            ExpressionAttributeValues={":zero": 0},
+        )
+
         if last_date == today:
             return current_streak, False  # already practiced today
 
         new_streak = (current_streak + 1) if last_date == yesterday else 1
         self._users.update_item(
             Key={"user_id": str(user_id)},
-            UpdateExpression="SET current_streak = :s, last_streak_date = :d, is_paused = :zero",
-            ExpressionAttributeValues={":s": new_streak, ":d": today, ":zero": 0},
+            UpdateExpression="SET current_streak = :s, last_streak_date = :d",
+            ExpressionAttributeValues={":s": new_streak, ":d": today},
         )
         return new_streak, True
 

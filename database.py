@@ -108,12 +108,15 @@ class Database:
             last_date      = row["last_streak_date"] or ""
             current_streak = row["current_streak"] or 0
 
+            # Always clear is_paused — answering any question resumes reminders.
+            conn.execute("UPDATE users SET is_paused = 0 WHERE user_id = ?", (user_id,))
+
             if last_date == today:
                 return current_streak, False  # already practiced today
 
             new_streak = (current_streak + 1) if last_date == yesterday else 1
             conn.execute(
-                "UPDATE users SET current_streak = ?, last_streak_date = ?, is_paused = 0 WHERE user_id = ?",
+                "UPDATE users SET current_streak = ?, last_streak_date = ? WHERE user_id = ?",
                 (new_streak, today, user_id),
             )
             return new_streak, True
