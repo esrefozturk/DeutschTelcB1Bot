@@ -578,11 +578,22 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_question(db, user.id, update.effective_chat.id, context, is_first=True)
 
 
+_DAILY_LIMIT_MAX = 21
+
+
 def _daily_limit(user: Optional[Dict]) -> int:
-    """Returns -1 for unlimited, else the day's question cap (streak + 1)."""
+    """Returns -1 for unlimited, else the day's question cap.
+
+    Formula: min(2 * streak + 3, 21)
+    Streak → limit: 0→3, 1→5, 2→7, 3→9, … 9→21 (capped)
+
+    New users get 3 questions on day 0, giving a better first-day
+    experience than the old streak+1=1 formula.
+    """
     if (user or {}).get("tier") == "unlimited":
         return -1
-    return (user or {}).get("current_streak", 0) + 1
+    streak = (user or {}).get("current_streak", 0)
+    return min(2 * streak + 3, _DAILY_LIMIT_MAX)
 
 
 async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
