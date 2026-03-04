@@ -531,9 +531,9 @@ Please explain:
 - A concrete memory tip or analogy to remember this rule
 - 1-2 additional example sentences in German (with English translations)
 
-Keep your explanation friendly, clear, and mostly in English. Bold German words/phrases using *asterisks*.
+Keep your explanation friendly, clear, and mostly in English. Bold German words/phrases using HTML bold tags, e.g. <b>Dativ</b>.
 Format nicely with line breaks. Keep it to 4-6 short paragraphs maximum.
-Do NOT return JSON — just plain prose with markdown formatting.
+Do NOT return JSON — just plain prose with HTML formatting (only <b>bold</b> and <i>italic</i> tags are supported).
 """
 
 
