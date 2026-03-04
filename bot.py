@@ -111,6 +111,8 @@ _EXAM_DISTRIBUTION = [
     ("writing",    2),
 ]
 
+_QUOTA_MSG = "📵 <b>Daily AI quota reached.</b> The quota resets at midnight UTC. Try again then!"
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -283,7 +285,7 @@ async def _send_question(
         except GeminiQuotaExceeded:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC. Try again then!",
+                text=_QUOTA_MSG,
                 parse_mode=ParseMode.HTML,
             )
             return
@@ -354,7 +356,7 @@ async def _send_exam_question(
     except GeminiQuotaExceeded:
         await context.bot.send_message(
             chat_id=chat_id,
-            text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC. Try again then!",
+            text=_QUOTA_MSG,
             parse_mode=ParseMode.HTML,
         )
         return
@@ -569,7 +571,7 @@ async def _handle_answer(
     except GeminiQuotaExceeded:
         await context.bot.send_message(
             chat_id=chat_id,
-            text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC. Try again then!",
+            text=_QUOTA_MSG,
             parse_mode=ParseMode.HTML,
         )
         return
@@ -922,7 +924,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except GeminiQuotaExceeded:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC. Try again then!",
+            text=_QUOTA_MSG,
             parse_mode=ParseMode.HTML,
         )
         return
@@ -1005,7 +1007,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except GeminiQuotaExceeded:
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text="📵 <b>Daily AI quota reached.</b> The free tier resets at midnight UTC.",
+                    text=_QUOTA_MSG,
                     parse_mode=ParseMode.HTML,
                 )
                 return
