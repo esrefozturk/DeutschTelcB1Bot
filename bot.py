@@ -823,7 +823,7 @@ async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "⏸ <b>Reminders paused.</b>\n\n"
         "You won't receive daily nudges anymore. "
-        "They'll automatically resume the next time you answer a question.",
+        "Type /next any time to resume — answering a question will automatically re-enable them.",
         parse_mode=ParseMode.HTML,
     )
 
