@@ -6,8 +6,9 @@ Two public coroutines:
   evaluate_answer(question_data, user_answer)                             -> dict
 
 Model fallback chain (paid tier-1, only models available on this project):
-  1. gemini-2.5-flash-lite — 4 000 RPM / unlimited RPD (cheaper primary)
-  2. gemini-2.5-flash      — 1 000 RPM / 10 000 RPD (fallback)
+  1. gemini-2.5-pro       —   150 RPM /   1 000 RPD (best quality primary)
+  2. gemini-2.5-flash     — 1 000 RPM /  10 000 RPD (fallback)
+  3. gemini-2.5-flash-lite — 4 000 RPM / unlimited RPD (last resort)
 
 If a model returns 429 (quota exhausted), the next one is tried automatically.
 """
@@ -28,10 +29,11 @@ logger = logging.getLogger(__name__)
 # Module-level client — initialised once by init_gemini()
 _client: Optional[genai.Client] = None
 
-# Primary: flash-lite (cheaper); fallback: flash (higher quality).
+# Primary: pro (best quality); fallbacks: flash → flash-lite.
 MODELS: List[str] = [
-    "gemini-2.5-flash-lite",  # 4 000 RPM / unlimited RPD — cheaper primary
-    "gemini-2.5-flash",       # 1 000 RPM / 10 000 RPD — fallback
+    "gemini-2.5-pro",        #   150 RPM /  1 000 RPD — best quality primary
+    "gemini-2.5-flash",      # 1 000 RPM / 10 000 RPD — fallback
+    "gemini-2.5-flash-lite", # 4 000 RPM / unlimited  — last resort
 ]
 
 
