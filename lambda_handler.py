@@ -61,9 +61,8 @@ logger.setLevel(logging.INFO)
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-# How long without practice before we send a nudge, and how often we re-nudge
-INACTIVITY_HOURS        = 4
-REMINDER_COOLDOWN_HOURS = 24
+# How long without practice before we send a nudge
+INACTIVITY_HOURS = 4
 
 # ── One-time cold-start initialization ───────────────────────────────────────
 
@@ -177,11 +176,11 @@ async def _maybe_send_inactivity_nudge(bot, user: dict, now: datetime) -> None:
         if inactive_h < INACTIVITY_HOURS:
             return  # still recently active
 
-        # Respect cooldown — max one reminder per day
+        # Respect cooldown — max one reminder per calendar day (UTC)
         last_reminder_str = user.get("last_reminder_sent", "")
         if last_reminder_str:
             last_reminder = datetime.fromisoformat(last_reminder_str)
-            if (now - last_reminder).total_seconds() / 3600 < REMINDER_COOLDOWN_HOURS:
+            if last_reminder.date() >= now.date():
                 return
 
         # Only show streak warning if they haven't already practiced today
