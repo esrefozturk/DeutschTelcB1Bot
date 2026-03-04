@@ -42,6 +42,7 @@ from database_dynamo import DynamoDatabase
 # it just imports the *class*, no SQLite file is opened until Database() is
 # instantiated.  We never call bot.main() here, so no SQLite DB is created.
 from bot import (
+    cmd_cancel,
     cmd_exam,
     cmd_help,
     cmd_next,
@@ -82,6 +83,7 @@ async def _build_application() -> Application:
     app.add_handler(CommandHandler("start",  cmd_start))
     app.add_handler(CommandHandler("next",   cmd_next))
     app.add_handler(CommandHandler("exam",   cmd_exam))
+    app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("stats",  cmd_stats))
     app.add_handler(CommandHandler("topic",  cmd_topic))
     app.add_handler(CommandHandler("help",   cmd_help))
