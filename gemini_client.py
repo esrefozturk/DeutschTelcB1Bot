@@ -309,7 +309,7 @@ async def _call_with_fallback(prompt: str, config: Optional[types.GenerateConten
     last_exc: Optional[Exception] = None
     for model in MODELS:
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda m=model: client.models.generate_content(
@@ -667,7 +667,7 @@ async def evaluate_voice_answer(
     last_exc: Optional[Exception] = None
     for model in MODELS:
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda m=model: client.models.generate_content(
