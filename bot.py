@@ -897,6 +897,8 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_text = update.message.text.strip()
+    if not user_text:
+        return
     await _handle_answer(db, user.id, update.effective_chat.id, user_text, context)
 
 
