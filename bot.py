@@ -620,6 +620,20 @@ async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db.upsert_user(user.id, user.username or "", user.first_name or "")
 
+    confirm = (context.args or [""])[0].lower() == "confirm"
+    exam_state = db.get_exam_state(user.id)
+    if exam_state and exam_state.get("active") and exam_state.get("done", 0) > 0 and not confirm:
+        done  = exam_state["done"]
+        total = exam_state["total"]
+        await update.message.reply_text(
+            f"⚠️ <b>You have an exam in progress</b> ({done}/{total} questions done).\n\n"
+            "Typing <code>/next confirm</code> will <b>abandon</b> your current exam.\n\n"
+            "• To continue the exam, answer the current question.\n"
+            "• To abandon and practice freely, type <code>/next confirm</code>.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
     db.set_exam_state(user.id, None)
     db.set_pending_question(user.id, None)
     await _send_question(db, user.id, update.effective_chat.id, context, is_first=True)
