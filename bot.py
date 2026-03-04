@@ -608,7 +608,7 @@ async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total = exam_state["total"]
         await update.message.reply_text(
             f"⚠️ <b>You have an exam in progress</b> ({done}/{total} questions done).\n\n"
-            "Typing /next will <b>abandon</b> your current exam.\n\n"
+            "Typing <code>/next confirm</code> will <b>abandon</b> your current exam.\n\n"
             "• To continue the exam, answer the current question.\n"
             "• To abandon and practice freely, type <code>/next confirm</code>.",
             parse_mode=ParseMode.HTML,
