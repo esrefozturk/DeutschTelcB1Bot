@@ -78,7 +78,9 @@ def _build_question_prompt(
     type_instructions = {
         "multiple_choice": (
             "Create a multiple-choice question with exactly 4 options (A, B, C, D). "
-            "Only one option is correct. Make the distractors plausible."
+            "Only one option is correct. Make the distractors plausible. "
+            "If the question involves choosing a word or phrase that belongs in a sentence, "
+            "mark the gap in the sentence with ___ so the learner knows where it goes."
         ),
         "fill_blank": (
             "Create a sentence with ONE blank marked as ___. "
