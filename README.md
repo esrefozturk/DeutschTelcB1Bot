@@ -11,7 +11,7 @@
 - **Spaced repetition (SRS)** — topics due for review surface more often; intervals double on correct answers
 - **Question deduplication** — the last 25 questions are remembered so repeats are avoided automatically
 - **Daily streaks** — practice every day, earn milestone badges at 3/7/14/30/50/100 days
-- **Hints** — tap 🔍 Get Hint for an instant nudge without seeing the answer (up to 2 per question, pre-generated)
+- **Hints** — tap 🔍 Get Hint for an instant nudge without seeing the answer (1 per question, pre-generated)
 - **Voice answers** 🎤 — send a voice message instead of typing; Gemini transcribes and evaluates it in one call
 - **Explain More** — after any answer, get a deep AI explanation of the grammar rule
 - **Exam simulation** — `/exam` runs a balanced 20-question TELC B1 practice test with a graded summary
@@ -35,8 +35,10 @@
 | `/start` | Welcome message + first question |
 | `/next` | Get a new practice question immediately |
 | `/exam` | Start a 20-question TELC B1 practice test |
+| `/cancel` | Cancel an exam in progress |
 | `/stats` | Performance summary, streak, and weak areas |
 | `/topic [name]` | Browse topics or focus on a specific one |
+| `/pause` | Stop daily reminders (type `/next` to re-enable) |
 | `/help` | Command reference |
 
 ---
@@ -59,7 +61,7 @@ Telegram  ──POST──►  API Gateway  ──►  AWS Lambda (Python 3.12)
 | User state + streaks | DynamoDB — Users table |
 | Session / pending question / exam state | DynamoDB — Sessions table |
 | Performance tracking (SRS) | DynamoDB — Performance table |
-| Question generation + evaluation | Google Gemini (2.5 Flash) |
+| Question generation + evaluation | Google Gemini (2.5 Pro, with Flash fallback) |
 | Scheduled reminders | EventBridge hourly rules |
 
 ---
