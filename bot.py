@@ -16,6 +16,7 @@ import html
 import logging
 import os
 import random
+import re
 from textwrap import dedent
 from typing import Dict, Optional
 
@@ -25,6 +26,7 @@ from telegram import (
     InlineKeyboardMarkup,
     Update,
 )
+from telegram.error import BadRequest
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -118,6 +120,12 @@ _QUOTA_MSG = "📵 <b>Daily AI quota reached.</b> The quota resets at midnight U
 
 def _esc(text: str) -> str:
     return html.escape(str(text))
+
+
+def _safe_html(text: str) -> str:
+    """Escape AI-generated text for Telegram HTML mode, preserving <b>/<i> tags."""
+    escaped = html.escape(str(text))
+    return re.sub(r'&lt;(/?(?:b|i))&gt;', r'<\1>', escaped)
 
 
 def _difficulty_stars(d: float) -> str:
@@ -1068,15 +1076,22 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=_action_keyboard(),
             )
             return
+        try:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=_safe_html(explanation),
+                parse_mode=ParseMode.HTML,
+                reply_markup=_action_keyboard(),
+            )
+        except BadRequest:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=explanation,
+                reply_markup=_action_keyboard(),
+            )
         pending["_explain_depth"] = depth + 1
         pending["_last_feedback"] = explanation[:500]
         db.set_pending_question(user.id, pending)
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=_esc(explanation),
-            parse_mode=ParseMode.HTML,
-            reply_markup=_action_keyboard(),
-        )
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
