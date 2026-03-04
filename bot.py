@@ -350,21 +350,33 @@ async def _send_exam_question(
 
     avoided = db.get_recent_questions(user_id)
 
-    try:
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        question = await generate_question(topic, subtopic, q_type, difficulty, None, avoided or None)
-    except GeminiQuotaExceeded:
+    question = None
+    for attempt in range(3):
+        try:
+            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            question = await generate_question(topic, subtopic, q_type, difficulty, None, avoided or None)
+            break
+        except GeminiQuotaExceeded:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=_QUOTA_MSG,
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        except ValueError as exc:
+            logger.warning("Exam question validation failed (attempt %d/3): %s", attempt + 1, exc)
+        except Exception as exc:
+            logger.error("exam generate_question failed: %s", exc)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Couldn't generate question. Try /exam to restart.",
+            )
+            return
+    if question is None:
+        logger.error("exam generate_question failed all 3 validation attempts for %s/%s", topic, subtopic)
         await context.bot.send_message(
             chat_id=chat_id,
-            text=_QUOTA_MSG,
-            parse_mode=ParseMode.HTML,
-        )
-        return
-    except Exception as exc:
-        logger.error("exam generate_question failed: %s", exc)
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚠️ Couldn't generate question. Try /exam to restart.",
+            text="⚠️ Couldn't generate a valid question for this exam slot. Try /exam to restart.",
         )
         return
 
