@@ -35,6 +35,7 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 
 import gemini_client
+from adaptive import pick_next_params
 from database_dynamo import DynamoDatabase
 
 # Import stateless handler functions from bot.py.
@@ -160,6 +161,65 @@ async def _run_reminders(reminder_type: str) -> None:
     elif reminder_type == "weekly":
         for user in users:
             await _maybe_send_weekly_summary(bot, user)
+
+    elif reminder_type == "cache_refill":
+        await _run_cache_refill(users, now)
+
+
+_CACHE_TARGET = 5  # questions to keep ready per user
+
+
+async def _run_cache_refill(users: list, now: datetime) -> None:
+    """Pre-generate questions for recently active users so the next /next is instant."""
+    cutoff = now.timestamp() - 86400  # active in last 24 h
+    active = []
+    for u in users:
+        la = u.get("last_active", "")
+        if la:
+            try:
+                ts = datetime.fromisoformat(la).timestamp()
+                if ts >= cutoff:
+                    active.append(u)
+            except Exception:
+                pass
+
+    if not active:
+        return
+    logger.info("Cache refill: %d active users", len(active))
+    await asyncio.gather(*[_refill_user_cache(u) for u in active], return_exceptions=True)
+
+
+async def _refill_user_cache(user: dict) -> None:
+    uid = user["user_id"]
+    try:
+        cache   = _db.get_question_cache(uid)
+        needed  = max(0, _CACHE_TARGET - len(cache))
+        if needed == 0:
+            return
+
+        performance = _db.get_all_performance(uid)
+        avoided     = _db.get_recent_questions(uid)
+
+        tasks   = [_generate_one_cached(uid, performance, avoided) for _ in range(needed)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        new_qs  = [r for r in results if isinstance(r, dict)]
+
+        if new_qs:
+            _db.set_question_cache(uid, cache + new_qs)
+            logger.info("Cache refill: added %d questions for user %s", len(new_qs), uid)
+    except Exception as exc:
+        logger.warning("Cache refill failed for user %s: %s", uid, exc)
+
+
+async def _generate_one_cached(uid: int, performance: list, avoided: list):
+    try:
+        topic, subtopic, q_type, difficulty = pick_next_params(performance)
+        return await gemini_client.generate_question(
+            topic, subtopic, q_type, difficulty, None, avoided or None
+        )
+    except Exception as exc:
+        logger.warning("Cache question generation failed for user %s: %s", uid, exc)
+        return None
 
 
 async def _maybe_send_inactivity_nudge(bot, user: dict, now: datetime) -> None:
