@@ -86,7 +86,9 @@ def _build_question_prompt(
         ),
         "fill_blank": (
             "Create a sentence with ONE blank marked as ___. "
-            "The correct answer fills the blank. Do NOT include options."
+            "The blank must replace a COMPLETE word or phrase — never split a word "
+            "(e.g. write 'Ein ___ Freund' not 'Ein gut___ Freund'). "
+            "The correct answer is the full word or phrase that fills the blank. Do NOT include options."
         ),
         "translation_to_german": (
             "Give an English sentence or phrase that the learner must translate into German. "
