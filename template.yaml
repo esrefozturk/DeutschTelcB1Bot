@@ -41,6 +41,7 @@ Globals:
         USERS_TABLE:       !Ref UsersTable
         SESSIONS_TABLE:    !Ref SessionsTable
         PERFORMANCE_TABLE: !Ref PerformanceTable
+        REPORTS_TABLE:     !Ref ReportsTable
 
 # ── Resources ─────────────────────────────────────────────────────────────────
 Resources:
@@ -61,6 +62,8 @@ Resources:
             TableName: !Ref SessionsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref PerformanceTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ReportsTable
       Events:
         WebhookPost:
           Type: Api
@@ -153,6 +156,20 @@ Resources:
           KeyType: HASH
         - AttributeName: topic_subtopic
           KeyType: RANGE
+
+
+  ReportsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    Properties:
+      TableName: !Sub "DeutschBotReports-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: report_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: report_id
+          KeyType: HASH
 
 # ── Outputs ───────────────────────────────────────────────────────────────────
 Outputs:

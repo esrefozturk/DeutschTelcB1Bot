@@ -66,6 +66,16 @@ class Database:
                     conn.execute(stmt)
                 except Exception:
                     pass
+            # Reports table (idempotent — IF NOT EXISTS)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS reports (
+                    report_id   TEXT PRIMARY KEY,
+                    user_id     INTEGER NOT NULL,
+                    reported_at TEXT NOT NULL,
+                    stage       TEXT NOT NULL,
+                    question    TEXT NOT NULL
+                )
+            """)
 
     # ── Users ──────────────────────────────────────────────────────────────
 
@@ -347,3 +357,13 @@ class Database:
                 "weak_areas":      [dict(r) for r in weak],
                 "questions_sent":  self.get_questions_sent(user_id),
             }
+    # ── Reports ────────────────────────────────────────────────────────────────
+
+    def save_report(self, user_id: int, question: dict, stage: str):
+        import uuid
+        report_id = str(uuid.uuid4())
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO reports (report_id, user_id, reported_at, stage, question) VALUES (?,?,?,?,?)",
+                (report_id, user_id, datetime.utcnow().isoformat(), stage, json.dumps(question)),
+            )
