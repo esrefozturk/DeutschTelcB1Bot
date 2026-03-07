@@ -150,22 +150,25 @@ def _question_keyboard(question: dict, hint_count: int = 0) -> Optional[InlineKe
     if hint_count < _MAX_HINTS:
         label = "🔍 Get Hint"
         rows.append([InlineKeyboardButton(label, callback_data="hint")])
-    return InlineKeyboardMarkup(rows) if rows else None
+    rows.append([InlineKeyboardButton("🚩 Report", callback_data="report:question")])
+    return InlineKeyboardMarkup(rows)
 
 
 def _action_keyboard() -> InlineKeyboardMarkup:
     """Buttons after normal evaluation."""
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("💡 Explain More", callback_data="explain"),
-        InlineKeyboardButton("➡️ Next Question", callback_data="next_q"),
-    ]])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💡 Explain More", callback_data="explain"),
+         InlineKeyboardButton("➡️ Next Question", callback_data="next_q")],
+        [InlineKeyboardButton("🚩 Report", callback_data="report:answer")],
+    ])
 
 
 def _exam_keyboard() -> InlineKeyboardMarkup:
     """Button after exam question evaluation — no explanation during exam."""
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("➡️ Next Question", callback_data="exam_next"),
-    ]])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➡️ Next Question", callback_data="exam_next")],
+        [InlineKeyboardButton("🚩 Report", callback_data="report:answer")],
+    ])
 
 
 def _fmt_question(q: dict, is_first: bool = False, progress: str = "") -> str:
@@ -1096,6 +1099,23 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending["_explain_depth"] = depth + 1
         pending["_last_feedback"] = explanation[:500]
         db.set_pending_question(user.id, pending)
+
+    elif data.startswith("report:"):
+        stage   = data.split(":", 1)[1]  # "question" or "answer"
+        pending = db.get_pending_question(user.id)
+        if pending:
+            try:
+                db.save_report(user.id, pending, stage)
+            except Exception as exc:
+                logger.error("save_report failed: %s", exc)
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="🚩 Thanks — question flagged for review.",
+        )
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

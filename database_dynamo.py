@@ -20,6 +20,7 @@ from boto3.dynamodb.conditions import Key
 USERS_TABLE       = os.environ.get("USERS_TABLE",       "DeutschBotUsers")
 SESSIONS_TABLE    = os.environ.get("SESSIONS_TABLE",    "DeutschBotSessions")
 PERFORMANCE_TABLE = os.environ.get("PERFORMANCE_TABLE", "DeutschBotPerformance")
+REPORTS_TABLE     = os.environ.get("REPORTS_TABLE",     "DeutschBotReports")
 
 
 def _now() -> str:
@@ -40,6 +41,7 @@ class DynamoDatabase:
         self._users       = ddb.Table(USERS_TABLE)
         self._sessions    = ddb.Table(SESSIONS_TABLE)
         self._performance = ddb.Table(PERFORMANCE_TABLE)
+        self._reports     = ddb.Table(REPORTS_TABLE)
 
     # ── Users ──────────────────────────────────────────────────────────────
 
@@ -364,3 +366,16 @@ class DynamoDatabase:
             "weak_areas":      weak,
             "questions_sent":  self.get_questions_sent(user_id),
         }
+
+    # ── Reports ────────────────────────────────────────────────────────────────
+
+    def save_report(self, user_id: int, question: dict, stage: str):
+        import uuid
+        report_id = str(uuid.uuid4())
+        self._reports.put_item(Item={
+            "report_id":   report_id,
+            "user_id":     str(user_id),
+            "reported_at": _now(),
+            "stage":       stage,
+            "question":    json.dumps(question),
+        })
