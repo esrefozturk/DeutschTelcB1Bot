@@ -195,6 +195,10 @@ def _fmt_question(q: dict, is_first: bool = False, progress: str = "") -> str:
         body += "\n\n<i>(Fill in the blank.)</i>"
     elif q["question_type"] == "error_correction":
         body += "\n\n<i>(Find and correct the single grammatical error.)</i>"
+    elif q["question_type"] == "translation_to_german":
+        body += "\n\n<i>(Translate the sentence above into German.)</i>"
+    elif q["question_type"] == "translation_to_english":
+        body += "\n\n<i>(Translate the sentence above into English.)</i>"
 
     return header + body
 
