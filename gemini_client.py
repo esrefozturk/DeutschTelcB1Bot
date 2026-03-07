@@ -92,11 +92,15 @@ def _build_question_prompt(
         ),
         "translation_to_german": (
             "Give an English sentence or phrase that the learner must translate into German. "
-            "The correct_answer field contains the German translation."
+            "The correct_answer field contains the German translation. "
+            "CRITICAL — the 'question' field must contain ONLY the English sentence itself. "
+            "Do NOT include any instruction text or preamble like 'Translate the following sentence:' — just the raw sentence."
         ),
         "translation_to_english": (
             "Give a German sentence that the learner must translate into English. "
-            "The correct_answer field contains the English translation."
+            "The correct_answer field contains the English translation. "
+            "CRITICAL — the 'question' field must contain ONLY the German sentence itself. "
+            "Do NOT include any instruction text or preamble like 'Übersetzen Sie den folgenden Satz:' — just the raw sentence."
         ),
         "error_correction": (
             "Write a German sentence that contains exactly ONE deliberate grammatical error. "
@@ -402,10 +406,12 @@ async def generate_question(
     # korrekten Satz: ...") and error_correction ("Korrigieren Sie den Fehler im
     # folgenden Satz: ...").  Strip it so validation and display are not broken.
     q_type = data.get("question_type", "")
-    if q_type in ("sentence_building", "error_correction"):
+    if q_type in ("sentence_building", "error_correction", "translation_to_german", "translation_to_english"):
         q_text = data.get("question", "")
-        # Match a German instruction prefix of 5-100 chars ending with ": "
-        stripped = re.sub(r'^[A-ZÄÖÜ][^:]{4,99}:\s+', '', q_text)
+        # Match an instruction prefix of 5-100 chars ending with ": "
+        # e.g. "Ordnen Sie die folgenden Wörter zu einem korrekten Satz: ..."
+        #      "Translate the following sentence into German: ..."
+        stripped = re.sub(r'^[A-ZÄÖÜa-z][^:]{4,99}:\s+', '', q_text)
         if stripped and stripped != q_text:
             logger.info("Stripped instruction prefix from %s question", q_type)
             data["question"] = stripped
