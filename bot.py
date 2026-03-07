@@ -274,53 +274,65 @@ async def _send_question(
             return
 
     performance = db.get_all_performance(user_id)
-
-    if forced_topic and forced_subtopic:
-        topic    = forced_topic
-        subtopic = forced_subtopic
-        q_type   = random.choice(QUESTION_TYPES_BY_TOPIC[topic])
-        perf_row = db.get_topic_performance(user_id, topic, subtopic)
-        difficulty = perf_row.get("difficulty", 2.0)
-    else:
-        topic, subtopic, q_type, difficulty = pick_next_params(performance)
-
-    recent_ctx = None
-    pending = db.get_pending_question(user_id)
-    if pending:
-        recent_ctx = f"{pending.get('topic')}/{pending.get('subtopic')}"
-
-    avoided = db.get_recent_questions(user_id)
+    avoided     = db.get_recent_questions(user_id)
+    avoided_set = set(avoided)
 
     question = None
-    for attempt in range(3):
-        try:
-            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-            question = await generate_question(topic, subtopic, q_type, difficulty, recent_ctx, avoided or None)
-            break
-        except GeminiQuotaExceeded:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=_QUOTA_MSG,
-                parse_mode=ParseMode.HTML,
-            )
-            return
-        except ValueError as exc:
-            # Our validators rejected the question — retry silently.
-            logger.warning("Question validation failed (attempt %d/3): %s", attempt + 1, exc)
-        except Exception as exc:
-            logger.error("generate_question failed: %s", exc)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="⚠️ Couldn't generate a question right now. Try /next in a moment.",
-            )
-            return
+
+    # Try the pre-generated cache first (only for normal adaptive questions)
+    if not (forced_topic or forced_subtopic):
+        cache = db.get_question_cache(user_id)
+        for i, cached_q in enumerate(cache):
+            if cached_q.get("question", "")[:100].strip() not in avoided_set:
+                question = cached_q
+                db.set_question_cache(user_id, cache[:i] + cache[i + 1:])
+                logger.info("Served cached question for user %s (cache had %d)", user_id, len(cache))
+                break
+
     if question is None:
-        logger.error("generate_question failed all 3 validation attempts for %s/%s", topic, subtopic)
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚠️ Couldn't generate a valid question right now. Try /next in a moment.",
-        )
-        return
+        # Cache miss — generate live
+        if forced_topic and forced_subtopic:
+            topic    = forced_topic
+            subtopic = forced_subtopic
+            q_type   = random.choice(QUESTION_TYPES_BY_TOPIC[topic])
+            perf_row = db.get_topic_performance(user_id, topic, subtopic)
+            difficulty = perf_row.get("difficulty", 2.0)
+        else:
+            topic, subtopic, q_type, difficulty = pick_next_params(performance)
+
+        recent_ctx = None
+        pending = db.get_pending_question(user_id)
+        if pending:
+            recent_ctx = f"{pending.get('topic')}/{pending.get('subtopic')}"
+
+        for attempt in range(3):
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+                question = await generate_question(topic, subtopic, q_type, difficulty, recent_ctx, avoided or None)
+                break
+            except GeminiQuotaExceeded:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=_QUOTA_MSG,
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            except ValueError as exc:
+                logger.warning("Question validation failed (attempt %d/3): %s", attempt + 1, exc)
+            except Exception as exc:
+                logger.error("generate_question failed: %s", exc)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Couldn't generate a question right now. Try /next in a moment.",
+                )
+                return
+        if question is None:
+            logger.error("generate_question failed all 3 validation attempts")
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Couldn't generate a valid question right now. Try /next in a moment.",
+            )
+            return
 
     text         = _fmt_question(question, is_first=is_first)
     reply_markup = _question_keyboard(question)  # MC buttons + hint

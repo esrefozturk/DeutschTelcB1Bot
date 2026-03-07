@@ -61,6 +61,7 @@ class Database:
                 "ALTER TABLE users ADD COLUMN tier TEXT DEFAULT 'default'",
                 "ALTER TABLE users ADD COLUMN questions_today INTEGER DEFAULT 0",
                 "ALTER TABLE users ADD COLUMN last_question_date TEXT",
+                "ALTER TABLE sessions ADD COLUMN question_cache TEXT DEFAULT '[]'",
             ]:
                 try:
                     conn.execute(stmt)
@@ -224,6 +225,31 @@ class Database:
                 (user_id,),
             ).fetchone()
             return row["questions_sent"] if row else 0
+
+    def get_question_cache(self, user_id: int) -> list:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT question_cache FROM sessions WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            if row and row["question_cache"]:
+                try:
+                    return json.loads(row["question_cache"])
+                except Exception:
+                    return []
+            return []
+
+    def set_question_cache(self, user_id: int, cache: list):
+        payload = json.dumps(cache)
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO sessions (user_id, question_cache)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET question_cache = excluded.question_cache
+                """,
+                (user_id, payload),
+            )
 
     def get_recent_questions(self, user_id: int) -> list:
         with self._conn() as conn:

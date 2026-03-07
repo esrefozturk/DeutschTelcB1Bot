@@ -231,6 +231,28 @@ class DynamoDatabase:
         item = resp.get("Item")
         return _int(item.get("questions_sent", 0)) if item else 0
 
+    def get_question_cache(self, user_id: int) -> list:
+        resp = self._sessions.get_item(
+            Key={"user_id": str(user_id)},
+            ProjectionExpression="question_cache",
+        )
+        item = resp.get("Item")
+        if not item or not item.get("question_cache"):
+            return []
+        raw = item["question_cache"]
+        try:
+            return json.loads(raw) if isinstance(raw, str) else list(raw)
+        except Exception:
+            return []
+
+    def set_question_cache(self, user_id: int, cache: list):
+        payload = json.dumps(cache)
+        self._sessions.update_item(
+            Key={"user_id": str(user_id)},
+            UpdateExpression="SET question_cache = :c",
+            ExpressionAttributeValues={":c": payload},
+        )
+
     def get_recent_questions(self, user_id: int) -> list:
         resp = self._sessions.get_item(
             Key={"user_id": str(user_id)},

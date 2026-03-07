@@ -81,6 +81,15 @@ Resources:
             Description: "Hourly inactivity check (08:00-20:00 UTC)"
             Input: '{"reminder_type": "inactivity"}'
 
+        # Question cache prefill: every hour between 08:00-20:00 UTC
+        # Pre-generates up to 5 questions per active user so responses are instant
+        QuestionCacheRefill:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 8-20 * * ? *)
+            Description: "Hourly question cache prefill (08:00-20:00 UTC)"
+            Input: '{"reminder_type": "cache_refill"}'
+
         # Weekly summary: every Sunday at 08:00 UTC
         WeeklySummary:
           Type: Schedule
