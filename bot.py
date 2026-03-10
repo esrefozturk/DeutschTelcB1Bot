@@ -1126,48 +1126,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
             pass
-        if not saved:
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text="🚩 Nothing to report — no active question found.",
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text="🚩 Thanks — question flagged for review.",
-            )
-            # Notify admin so reports are visible in real-time.
-            if ADMIN_CHAT_ID and pending:
-                try:
-                    q_type    = pending.get("question_type", "?")
-                    topic     = pending.get("topic", "?")
-                    subtopic  = pending.get("subtopic", "?")
-                    q_text    = pending.get("question", "")[:300]
-                    correct   = pending.get("correct_answer", "?")
-                    user_ans  = pending.get("_user_answer", "")
-                    err_intro = pending.get("error_introduced", "")
-                    name      = html.escape(user.first_name or "")
-                    handle    = f"@{html.escape(user.username)}" if user.username else ""
-                    lines = [
-                        f"🚩 <b>Question reported</b> (stage: {_esc(stage)})",
-                        "",
-                        f"User: {name} {handle}  |  ID: <code>{user.id}</code>",
-                        f"Type: <b>{_esc(q_type)}</b>  |  Topic: {_esc(topic)}/{_esc(subtopic)}",
-                        "",
-                        f"<b>Question:</b>\n<code>{_esc(q_text)}</code>",
-                        f"<b>Correct answer:</b> <code>{_esc(correct)}</code>",
-                    ]
-                    if err_intro:
-                        lines.append(f"<b>Error introduced:</b> {_esc(err_intro)}")
-                    if user_ans:
-                        lines.append(f"<b>User's answer:</b> {_esc(user_ans)}")
-                    await context.bot.send_message(
-                        chat_id=int(ADMIN_CHAT_ID),
-                        text="\n".join(lines),
-                        parse_mode=ParseMode.HTML,
-                    )
-                except Exception as exc:
-                    logger.warning("Failed to notify admin of report from user %s: %s", user.id, exc)
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="🚩 Thanks — question flagged for review." if saved else "🚩 Nothing to report — no active question found.",
+        )
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
