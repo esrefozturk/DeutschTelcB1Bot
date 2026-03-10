@@ -72,6 +72,7 @@ QUESTION_TYPES_BY_TOPIC: Dict[str, List[str]] = {
         "multiple_choice",
         "error_correction",
         "sentence_building",
+        "word_bank_fill",
     ],
     "vocabulary": [
         "multiple_choice",
@@ -79,10 +80,14 @@ QUESTION_TYPES_BY_TOPIC: Dict[str, List[str]] = {
         "translation_to_english",
         "fill_blank",
         "sentence_building",
+        "word_bank_fill",
     ],
     "reading": [
         "multiple_choice",
         "short_answer",
+        "true_false",
+        "text_heading_matching",
+        "situation_matching",
     ],
     "writing": [
         "short_answer",
