@@ -53,9 +53,10 @@ def _client_or_raise() -> genai.Client:
 _QUESTION_SCHEMA = """
 {
   "question":         "<the question text, in German or English as appropriate>",
-  "question_type":    "<one of: multiple_choice | fill_blank | translation_to_german | translation_to_english | error_correction | sentence_building | short_answer>",
+  "question_type":    "<one of: multiple_choice | fill_blank | translation_to_german | translation_to_english | error_correction | sentence_building | short_answer | true_false | text_heading_matching | situation_matching | word_bank_fill>",
   "options":          ["A) ...", "B) ...", "C) ...", "D) ..."],
-  "correct_answer":   "<the exact correct answer or the letter A/B/C/D for multiple choice>",
+  "word_bank":        ["word1", "word2", "word3", "word4", "word5", "word6"],
+  "correct_answer":   "<the exact correct answer; letter A/B/C/D for multiple_choice/text_heading_matching/situation_matching; 'Richtig' or 'Falsch' for true_false; exact word for word_bank_fill>",
   "error_introduced": "<error_correction only: describe the exact error you put in the sentence, e.g. 'wrong adjective ending: interessante → interessanten'; empty string for all other types>",
   "explanation":      "<1-2 sentences explaining the rule or meaning in English>",
   "hint_1":           "<a gentle hint that nudges the learner without revealing the answer>",
@@ -151,6 +152,50 @@ def _build_question_prompt(
             "Ask an open-ended question about a short German text or scenario. "
             "The correct_answer should be a model answer (1-2 sentences)."
         ),
+        "true_false": (
+            "Present a short German text (4-6 sentences, B1 level) followed by ONE statement about it. "
+            "The learner decides if the statement is Richtig (true) or Falsch (false) based on the text. "
+            "This simulates the Hörverstehen section of TELC B1, presented as a reading passage. "
+            "The 'question' field must contain the German text followed by a blank line, "
+            "then the label 'Aussage:' and the statement. "
+            "Example format:\n"
+            "  <German text — 4 to 6 sentences>\n\n"
+            "  Aussage: <one statement about the text>\n\n"
+            "The correct_answer must be exactly 'Richtig' or 'Falsch'. "
+            "Set 'options' to an empty array []. "
+            "Set 'word_bank' to an empty array []. "
+            "Vary between Richtig and Falsch — do not always pick one."
+        ),
+        "text_heading_matching": (
+            "Write a short German text (3-5 sentences) on a B1 topic. "
+            "Then provide exactly 4 possible headings. Only ONE heading correctly summarises the text. "
+            "The 3 distractors must be plausible but wrong (too specific, too general, or about a different aspect). "
+            "This simulates Leseverstehen Teil 1 of the TELC B1 exam. "
+            "The 'question' field contains ONLY the German text (no headings, no instructions). "
+            "Put the 4 headings in 'options' as: ['A) Heading one', 'B) Heading two', 'C) Heading three', 'D) Heading four']. "
+            "The correct_answer is the single letter: A, B, C, or D. "
+            "Set 'word_bank' to an empty array []."
+        ),
+        "situation_matching": (
+            "Describe a situation where a person needs something specific (2-3 sentences in German). "
+            "Then provide exactly 4 short German notices, advertisements, or announcements (each 1-3 sentences). "
+            "Only ONE notice matches the situation perfectly. The 3 others are plausible distractors. "
+            "This simulates Leseverstehen Teil 3 of the TELC B1 exam. "
+            "The 'question' field contains ONLY the situation description. "
+            "Put the 4 notices in 'options' as: ['A) Notice text', 'B) Notice text', 'C) Notice text', 'D) Notice text']. "
+            "The correct_answer is the single letter: A, B, C, or D. "
+            "Set 'word_bank' to an empty array []."
+        ),
+        "word_bank_fill": (
+            "Write a short German text or letter excerpt (3-5 sentences) with exactly ONE blank marked as ___. "
+            "The blank tests a grammar connector or function word (conjunction, preposition, article, pronoun, or adverb). "
+            "Provide exactly 6 words in the 'word_bank' field — exactly ONE correctly fills the blank; "
+            "the other 5 are plausible distractors from the same word class. "
+            "This simulates Sprachbausteine Teil 2 of the TELC B1 exam. "
+            "The 'question' field contains ONLY the text with the blank (no instructions, no word bank). "
+            "The correct_answer is the exact word from the word bank that fills the blank. "
+            "Set 'options' to an empty array []."
+        ),
     }
 
     instruction   = type_instructions.get(question_type, "Create a question.")
@@ -233,6 +278,24 @@ def _build_eval_prompt(question_data: Dict, user_answer: str) -> str:
         leniency = (
             "Accept any answer that conveys the correct meaning, even if wording differs slightly. "
             "Be encouraging and highlight what was good even in partial answers."
+        )
+    elif q_type == "true_false":
+        leniency = (
+            "Accept any answer that clearly indicates the intended response. "
+            "For 'Richtig': accept richtig, r, +, true, correct, ja, yes (case-insensitive). "
+            "For 'Falsch': accept falsch, f, -, false, incorrect, nein, no, wrong (case-insensitive). "
+            "Only mark correct if the learner's answer matches the correct_answer direction."
+        )
+    elif q_type in ("text_heading_matching", "situation_matching"):
+        leniency = (
+            "Accept the correct letter (A/B/C/D, case-insensitive) or the full text of the correct option. "
+            "Be strict — only the correct option counts."
+        )
+    elif q_type == "word_bank_fill":
+        leniency = (
+            "Accept the exact word from the word bank (case-insensitive). "
+            "Be strict about word choice — only the correct word from the bank is accepted. "
+            "Minor spelling variations are acceptable."
         )
     elif q_type == "error_correction":
         leniency = (
@@ -400,6 +463,7 @@ async def generate_question(
     data["topic"]    = topic
     data["subtopic"] = subtopic
     data.setdefault("difficulty", difficulty)
+    data.setdefault("word_bank", [])
 
     # Fix: Gemini sometimes prepends a German instruction phrase to the question
     # field for sentence_building ("Ordnen Sie die folgenden Wörter zu einem
@@ -480,6 +544,47 @@ async def generate_question(
         # Second-opinion check: verify the sentence actually has a real grammar error,
         # not just a semantic/meaning substitution (e.g. muss → darf).
         await _verify_error_correction(q, ans, data.get("error_introduced", ""))
+
+    # Validate true_false: correct_answer must be exactly "Richtig" or "Falsch".
+    if data.get("question_type") == "true_false":
+        ans = data.get("correct_answer", "").strip()
+        if ans not in ("Richtig", "Falsch"):
+            raise ValueError(
+                f"true_false correct_answer must be 'Richtig' or 'Falsch', got: {ans!r}"
+            )
+        if "Aussage:" not in data.get("question", ""):
+            raise ValueError(
+                "true_false question field must contain 'Aussage:' marker separating text from statement"
+            )
+
+    # Validate text_heading_matching and situation_matching: 4 options, A/B/C/D answer.
+    if data.get("question_type") in ("text_heading_matching", "situation_matching"):
+        opts = data.get("options", [])
+        ans  = data.get("correct_answer", "").strip().upper()
+        if len(opts) < 4:
+            raise ValueError(
+                f"{data['question_type']} needs 4 options, got {len(opts)}"
+            )
+        if ans not in ("A", "B", "C", "D"):
+            raise ValueError(
+                f"{data['question_type']} correct_answer must be A/B/C/D, got: {ans!r}"
+            )
+
+    # Validate word_bank_fill: word_bank has ≥4 words, correct_answer is in the bank.
+    if data.get("question_type") == "word_bank_fill":
+        bank = data.get("word_bank", [])
+        ans  = data.get("correct_answer", "").strip().lower()
+        if len(bank) < 4:
+            raise ValueError(
+                f"word_bank_fill needs at least 4 words in word_bank, got {len(bank)}: {bank!r}"
+            )
+        if "___" not in data.get("question", ""):
+            raise ValueError("word_bank_fill question must contain '___' blank marker")
+        bank_lower = [w.strip().lower() for w in bank]
+        if ans not in bank_lower:
+            raise ValueError(
+                f"word_bank_fill correct_answer {ans!r} not found in word_bank {bank!r}"
+            )
 
     return data
 
@@ -564,6 +669,10 @@ def _build_hint_prompt(question_data: Dict, hint_count: int) -> str:
         "error_correction":       "Point to which part of the sentence contains the error (e.g. beginning/middle/end, or which word type is wrong).",
         "sentence_building":      "Suggest which word should come first, or name the grammatical rule that governs the word order.",
         "short_answer":           "Point to which part of the text or scenario contains the answer.",
+        "true_false":             "Point to which part of the text supports or contradicts the Aussage statement, without revealing the answer.",
+        "text_heading_matching":  "Hint at the main theme or key concept of the text without naming the correct heading.",
+        "situation_matching":     "Point out which key detail in the situation narrows down the correct notice.",
+        "word_bank_fill":         "Hint at the grammatical role the missing word plays (e.g. 'Think about which conjunction introduces a reason').",
     }.get(q_type, "Give a gentle directional hint.")
 
     return f"""You are helping a German B1 learner who is stuck on a question.

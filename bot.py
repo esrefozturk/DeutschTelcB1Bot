@@ -89,7 +89,9 @@ HELP_MSG = (
     "/request_more_quota – Request more daily questions\n"
     "/help   – This message\n\n"
     "<b>Answering</b>\n"
-    "• For multiple-choice questions tap a button OR type A / B / C / D.\n"
+    "• For multiple-choice, heading-match, and situation-match questions tap a button OR type A / B / C / D.\n"
+    "• For Richtig/Falsch questions tap a button OR type Richtig / Falsch.\n"
+    "• For word-bank questions type the correct word from the word bank.\n"
     "• For all other types just type your answer freely.\n"
     "• You can also send a <b>voice message</b> 🎤 — it will be transcribed and evaluated.\n"
     "• Minor spelling mistakes are OK; grammar concepts are graded strictly."
@@ -139,14 +141,21 @@ _MAX_HINTS = 1
 def _question_keyboard(question: dict, hint_count: int = 0) -> Optional[InlineKeyboardMarkup]:
     """
     Keyboard attached to a question before the user answers.
-    - Multiple-choice: one button per option + hint button below.
+    - Multiple-choice / text_heading_matching / situation_matching: one button per option + hint.
+    - true_false: Richtig / Falsch buttons + hint.
     - All other types: just the hint button.
     No hint button in exam mode (caller passes hint_count=_MAX_HINTS to suppress it).
     """
     rows = []
-    if question["question_type"] == "multiple_choice" and "options" in question:
+    q_type = question["question_type"]
+    if q_type in ("multiple_choice", "text_heading_matching", "situation_matching") and "options" in question:
         for opt in question["options"]:
             rows.append([InlineKeyboardButton(opt, callback_data=f"answer:{opt[0]}")])
+    elif q_type == "true_false":
+        rows.append([
+            InlineKeyboardButton("✅ Richtig", callback_data="answer:Richtig"),
+            InlineKeyboardButton("❌ Falsch", callback_data="answer:Falsch"),
+        ])
     if hint_count < _MAX_HINTS:
         label = "🔍 Get Hint"
         rows.append([InlineKeyboardButton(label, callback_data="hint")])
@@ -202,6 +211,18 @@ def _fmt_question(q: dict, is_first: bool = False, progress: str = "") -> str:
         body += "\n\n<i>(Translate the sentence above into German.)</i>"
     elif q["question_type"] == "translation_to_english":
         body += "\n\n<i>(Translate the sentence above into English.)</i>"
+    elif q["question_type"] == "true_false":
+        body += "\n\n<i>(Is the Aussage Richtig or Falsch? Tap a button or type your answer.)</i>"
+    elif q["question_type"] == "text_heading_matching":
+        body += "\n\n<i>(Choose the heading that best matches the text above.)</i>"
+    elif q["question_type"] == "situation_matching":
+        body += "\n\n<i>(Choose the notice that best fits the situation above.)</i>"
+    elif q["question_type"] == "word_bank_fill":
+        word_bank = q.get("word_bank", [])
+        if word_bank:
+            bank_display = "  ·  ".join(_esc(w) for w in word_bank)
+            body += f"\n\n<b>Word bank:</b> {bank_display}"
+        body += "\n\n<i>(Fill in the blank using a word from the word bank.)</i>"
 
     return header + body
 
@@ -335,8 +356,8 @@ async def _send_question(
             return
 
     text         = _fmt_question(question, is_first=is_first)
-    reply_markup = _question_keyboard(question)  # MC buttons + hint
-    if question["question_type"] == "multiple_choice" and "options" in question:
+    reply_markup = _question_keyboard(question)  # MC/matching/true_false buttons + hint
+    if question["question_type"] in ("multiple_choice", "text_heading_matching", "situation_matching") and "options" in question:
         options_text = "\n".join(_esc(opt) for opt in question["options"])
         text += f"\n\n{options_text}"
 
@@ -410,9 +431,9 @@ async def _send_exam_question(
     question["_exam_mode"] = True
 
     text         = _fmt_question(question, is_first=True, progress=progress)
-    # Exam mode: MC buttons only, no hint button (_MAX_HINTS suppresses it)
+    # Exam mode: MC/matching/true_false buttons only, no hint (_MAX_HINTS suppresses it)
     reply_markup = _question_keyboard(question, hint_count=_MAX_HINTS)
-    if question["question_type"] == "multiple_choice" and "options" in question:
+    if question["question_type"] in ("multiple_choice", "text_heading_matching", "situation_matching") and "options" in question:
         options_text = "\n".join(_esc(opt) for opt in question["options"])
         text += f"\n\n{options_text}"
 
