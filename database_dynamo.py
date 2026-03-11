@@ -75,6 +75,7 @@ class DynamoDatabase:
                     "last_reminder_sent": item.get("last_reminder_sent", ""),
                     "current_streak":     _int(item.get("current_streak", 0)),
                     "is_paused":          _int(item.get("is_paused", 0)),
+                    "tier":               item.get("tier", "default"),
                 })
             if "LastEvaluatedKey" not in resp:
                 break
