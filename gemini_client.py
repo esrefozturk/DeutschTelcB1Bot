@@ -139,11 +139,16 @@ def _build_question_prompt(
         "sentence_building": (
             "Provide a scrambled set of German words (comma-separated) that the learner "
             "must arrange into a correct sentence. "
-            "The correct_answer is the properly ordered sentence. "
-            "IMPORTANT: each token in the scramble must appear exactly as it will in the "
-            "final sentence — do NOT split compound nouns (e.g. provide 'Kunstausstellungen' "
-            "as one token, never as 'Kunst' and 'Ausstellungen' separately). "
-            "The learner should only need to reorder words, not merge or split them. "
+            "The correct_answer is the properly ordered sentence (including normal punctuation). "
+            "STRICT TOKEN RULES — every violation causes a retry, so follow carefully:\n"
+            "1. Each token must be EXACTLY ONE word — no spaces allowed inside a token. "
+            "   Wrong: 'zu nehmen', 'Der Arzt'. Right: 'zu', 'nehmen', 'Der', 'Arzt'.\n"
+            "2. Do NOT include punctuation characters (. , ! ?) as tokens. "
+            "   The learner does not need to place punctuation — omit all punctuation from the token list.\n"
+            "3. Do NOT split compound nouns (e.g. provide 'Kunstausstellungen' as one token, "
+            "   never as 'Kunst' and 'Ausstellungen' separately).\n"
+            "4. Choose sentences WITHOUT internal commas — avoid 'weil'/'obwohl'/'dass' clauses "
+            "   that require a comma, and avoid infinitive constructions with 'zu' after a comma.\n"
             "CRITICAL — the 'question' field must contain ONLY the comma-separated word list. "
             "Do NOT include any instruction text, preamble, or phrases like "
             "'Ordnen Sie die folgenden Wörter zu einem korrekten Satz:' — just the raw word list."
@@ -498,12 +503,24 @@ async def generate_question(
                 opt = opt[2:].strip()
             data["correct_answer"] = opt
 
-    # Validate sentence_building questions: every scrambled token must appear
-    # verbatim (case-insensitive) in the correct answer.  If a token is missing
-    # the model likely split a compound noun — discard and retry.
+    # Validate sentence_building questions.
     if data.get("question_type") == "sentence_building":
+        import string as _string
         answer_lower = data.get("correct_answer", "").lower()
         tokens = [t.strip() for t in data.get("question", "").split(",") if t.strip()]
+        # Reject punctuation-only tokens (e.g. "." or "," included as a standalone token).
+        punct_only = [t for t in tokens if all(c in _string.punctuation for c in t)]
+        if punct_only:
+            raise ValueError(
+                f"sentence_building scramble contains punctuation-only tokens: {punct_only!r}"
+            )
+        # Reject multi-word tokens (spaces inside a token, e.g. "zu nehmen", "Der Arzt").
+        multi_word = [t for t in tokens if " " in t]
+        if multi_word:
+            raise ValueError(
+                f"sentence_building scramble contains multi-word tokens: {multi_word!r}"
+            )
+        # Reject tokens missing from the correct answer (likely split compound noun).
         bad = [t for t in tokens if t.lower() not in answer_lower]
         if bad:
             raise ValueError(
