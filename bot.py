@@ -931,6 +931,18 @@ async def cmd_request_more_quota(update: Update, context: ContextTypes.DEFAULT_T
 
 # ── Message handler (free-text answers) ──────────────────────────────────────
 
+# Obvious non-answers: don't call Gemini; prompt to answer or skip (saves API, clearer UX).
+_PLACEHOLDER_ANSWERS = frozenset({"x", "idk", "skip", "..."})
+
+
+def _is_placeholder_answer(text: str) -> bool:
+    """True if the message looks like a skip/placeholder rather than a real answer."""
+    t = text.strip().lower()
+    if len(t) <= 1:
+        return True
+    return t in _PLACEHOLDER_ANSWERS
+
+
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db: Database = context.bot_data["db"]
     user = update.effective_user
@@ -947,6 +959,14 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text.strip()
     if not user_text:
         return
+
+    if pending and _is_placeholder_answer(user_text):
+        await update.message.reply_text(
+            "That doesn’t look like an answer. Type your answer here, or use <b>➡️ Next Question</b> to skip.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
     await _handle_answer(db, user.id, update.effective_chat.id, user_text, context)
 
 
