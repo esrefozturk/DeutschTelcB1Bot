@@ -27,11 +27,9 @@ BASE = f"https://api.telegram.org/bot{TOKEN}"
 
 
 def api(method: str, **payload) -> dict:
-    url  = f"{BASE}/{method}"
+    url = f"{BASE}/{method}"
     data = json.dumps(payload).encode()
-    req  = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}
-    )
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read())
@@ -45,12 +43,12 @@ def set_webhook(url: str):
     result = api(
         "setWebhook",
         url=url,
-        max_connections=10,        # Lambda concurrency is usually low for a personal bot
-        allowed_updates=[          # only request the update types the bot handles
+        max_connections=10,  # Lambda concurrency is usually low for a personal bot
+        allowed_updates=[  # only request the update types the bot handles
             "message",
             "callback_query",
         ],
-        drop_pending_updates=True, # discard any updates queued while bot was offline
+        drop_pending_updates=True,  # discard any updates queued while bot was offline
     )
     if result.get("ok"):
         print(f"✅  Webhook set:\n    {url}")

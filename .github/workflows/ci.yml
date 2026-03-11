@@ -5,8 +5,8 @@ on:
     branches: [main]
 
 jobs:
-  lint-and-check:
-    name: Lint & import check
+  lint-and-test:
+    name: Lint, format & test
     runs-on: ubuntu-latest
 
     steps:
@@ -18,10 +18,16 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt ruff
+        run: pip install -r requirements-dev.txt
 
       - name: Lint with ruff
         run: ruff check .
+
+      - name: Format check with ruff
+        run: ruff format --check .
+
+      - name: Run tests
+        run: pytest tests/ -v
 
       - name: Import sanity check
         env:

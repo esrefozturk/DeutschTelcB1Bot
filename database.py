@@ -94,9 +94,7 @@ class Database:
 
     def get_user(self, user_id: int) -> Optional[Dict]:
         with self._conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM users WHERE user_id = ?", (user_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
             return dict(row) if row else None
 
     def update_streak(self, user_id: int) -> tuple[int, bool]:
@@ -104,8 +102,8 @@ class Database:
         Update daily streak. Returns (new_streak, is_new_day).
         is_new_day is True when this is the first answer of a calendar day.
         """
-        _today    = datetime.now(timezone.utc).date()
-        today     = _today.isoformat()
+        _today = datetime.now(timezone.utc).date()
+        today = _today.isoformat()
         yesterday = (_today - timedelta(days=1)).isoformat()
 
         with self._conn() as conn:
@@ -116,7 +114,7 @@ class Database:
             if not row:
                 return 0, False
 
-            last_date      = row["last_streak_date"] or ""
+            last_date = row["last_streak_date"] or ""
             current_streak = row["current_streak"] or 0
 
             # Always clear is_paused — answering any question resumes reminders.
@@ -266,7 +264,7 @@ class Database:
 
     def add_recent_question(self, user_id: int, question_text: str, max_size: int = 25):
         snippet = question_text[:100].strip()
-        recent  = self.get_recent_questions(user_id)
+        recent = self.get_recent_questions(user_id)
         if snippet not in recent:
             recent.append(snippet)
         if len(recent) > max_size:
@@ -286,9 +284,7 @@ class Database:
 
     def get_all_performance(self, user_id: int) -> list[Dict]:
         with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM performance WHERE user_id = ?", (user_id,)
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM performance WHERE user_id = ?", (user_id,)).fetchall()
             return [dict(r) for r in rows]
 
     def get_topic_performance(self, user_id: int, topic: str, subtopic: str) -> Dict:
@@ -330,9 +326,19 @@ class Database:
                     last_tested     = datetime('now')
                 """,
                 (
-                    user_id, topic, subtopic,
-                    int(is_correct), int(not is_correct), score, new_difficulty, review_interval,
-                    int(is_correct), int(not is_correct), score, new_difficulty, review_interval,
+                    user_id,
+                    topic,
+                    subtopic,
+                    int(is_correct),
+                    int(not is_correct),
+                    score,
+                    new_difficulty,
+                    review_interval,
+                    int(is_correct),
+                    int(not is_correct),
+                    score,
+                    new_difficulty,
+                    review_interval,
                 ),
             )
 
@@ -348,12 +354,12 @@ class Database:
                 """,
                 (user_id,),
             ).fetchone()
-            total_correct   = row["total_correct"]   or 0
+            total_correct = row["total_correct"] or 0
             total_incorrect = row["total_incorrect"] or 0
-            total_score     = row["total_score"]     or 0.0
-            total           = total_correct + total_incorrect
-            accuracy        = round(total_correct / total * 100, 1) if total else 0
-            avg_score       = round(total_score / total * 100, 1) if total else 0
+            total_score = row["total_score"] or 0.0
+            total = total_correct + total_incorrect
+            accuracy = round(total_correct / total * 100, 1) if total else 0
+            avg_score = round(total_score / total * 100, 1) if total else 0
 
             weak = conn.execute(
                 """
@@ -368,28 +374,28 @@ class Database:
                 (user_id,),
             ).fetchall()
 
-            streak_row = conn.execute(
-                "SELECT current_streak FROM users WHERE user_id = ?", (user_id,)
-            ).fetchone()
+            streak_row = conn.execute("SELECT current_streak FROM users WHERE user_id = ?", (user_id,)).fetchone()
             streak = streak_row["current_streak"] if streak_row else 0
 
             return {
-                "total_correct":   total_correct,
+                "total_correct": total_correct,
                 "total_incorrect": total_incorrect,
                 "total_questions": total,
-                "accuracy":        accuracy,
-                "avg_score":       avg_score,
-                "streak":          streak,
-                "weak_areas":      [dict(r) for r in weak],
-                "questions_sent":  self.get_questions_sent(user_id),
+                "accuracy": accuracy,
+                "avg_score": avg_score,
+                "streak": streak,
+                "weak_areas": [dict(r) for r in weak],
+                "questions_sent": self.get_questions_sent(user_id),
             }
+
     # ── Reports ────────────────────────────────────────────────────────────────
 
     def save_report(self, user_id: int, question: dict, stage: str):
         import uuid
+
         report_id = str(uuid.uuid4())
         with self._conn() as conn:
             conn.execute(
                 "INSERT INTO reports (report_id, user_id, reported_at, stage, question) VALUES (?,?,?,?,?)",
-                (report_id, user_id, datetime.utcnow().isoformat(), stage, json.dumps(question)),
+                (report_id, user_id, datetime.now(timezone.utc).isoformat(), stage, json.dumps(question)),
             )

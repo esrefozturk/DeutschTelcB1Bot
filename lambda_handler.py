@@ -75,20 +75,18 @@ _db = DynamoDatabase()
 async def _build_application() -> Application:
     # Disable connection keep-alive so warm Lambda invocations never reuse a
     # TCP connection that AWS NAT has already silently dropped (→ ConnectTimeout).
-    _request = HTTPXRequest(
-        httpx_kwargs={"limits": httpx.Limits(max_connections=5, max_keepalive_connections=0)}
-    )
+    _request = HTTPXRequest(httpx_kwargs={"limits": httpx.Limits(max_connections=5, max_keepalive_connections=0)})
     app = Application.builder().token(TELEGRAM_TOKEN).request(_request).build()
     app.bot_data["db"] = _db
 
-    app.add_handler(CommandHandler("start",  cmd_start))
-    app.add_handler(CommandHandler("next",   cmd_next))
-    app.add_handler(CommandHandler("exam",   cmd_exam))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("next", cmd_next))
+    app.add_handler(CommandHandler("exam", cmd_exam))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
-    app.add_handler(CommandHandler("stats",  cmd_stats))
-    app.add_handler(CommandHandler("topic",  cmd_topic))
-    app.add_handler(CommandHandler("help",   cmd_help))
-    app.add_handler(CommandHandler("pause",  cmd_pause))
+    app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("topic", cmd_topic))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("pause", cmd_pause))
     app.add_handler(CommandHandler("request_more_quota", cmd_request_more_quota))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.VOICE, on_voice))
@@ -149,8 +147,8 @@ async def _process(body: dict) -> None:
 
 
 async def _run_reminders(reminder_type: str) -> None:
-    bot  = _application.bot
-    now  = datetime.now(timezone.utc)
+    bot = _application.bot
+    now = datetime.now(timezone.utc)
     users = _db.get_all_users()
     logger.info("Running '%s' reminder for %d users", reminder_type, len(users))
 
@@ -179,7 +177,10 @@ async def _run_cache_refill(users: list, now: datetime) -> None:
         la = u.get("last_active", "")
         if la:
             try:
-                ts = datetime.fromisoformat(la).timestamp()
+                dt = datetime.fromisoformat(la)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                ts = dt.timestamp()
                 if ts >= cutoff:
                     active.append(u)
             except Exception:
@@ -194,17 +195,17 @@ async def _run_cache_refill(users: list, now: datetime) -> None:
 async def _refill_user_cache(user: dict) -> None:
     uid = user["user_id"]
     try:
-        cache   = _db.get_question_cache(uid)
-        needed  = max(0, _CACHE_TARGET - len(cache))
+        cache = _db.get_question_cache(uid)
+        needed = max(0, _CACHE_TARGET - len(cache))
         if needed == 0:
             return
 
         performance = _db.get_all_performance(uid)
-        avoided     = _db.get_recent_questions(uid)
+        avoided = _db.get_recent_questions(uid)
 
-        tasks   = [_generate_one_cached(uid, performance, avoided) for _ in range(needed)]
+        tasks = [_generate_one_cached(uid, performance, avoided) for _ in range(needed)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        new_qs  = [r for r in results if isinstance(r, dict)]
+        new_qs = [r for r in results if isinstance(r, dict)]
 
         if new_qs:
             _db.set_question_cache(uid, cache + new_qs)
@@ -216,9 +217,7 @@ async def _refill_user_cache(user: dict) -> None:
 async def _generate_one_cached(uid: int, performance: list, avoided: list):
     try:
         topic, subtopic, q_type, difficulty = pick_next_params(performance)
-        return await gemini_client.generate_question(
-            topic, subtopic, q_type, difficulty, None, avoided or None
-        )
+        return await gemini_client.generate_question(topic, subtopic, q_type, difficulty, None, avoided or None)
     except Exception as exc:
         logger.warning("Cache question generation failed for user %s: %s", uid, exc)
         return None
@@ -236,7 +235,9 @@ async def _maybe_send_inactivity_nudge(bot, user: dict, now: datetime) -> None:
 
     try:
         last_active = datetime.fromisoformat(last_active_str)
-        inactive_h  = (now - last_active).total_seconds() / 3600
+        if last_active.tzinfo is None:
+            last_active = last_active.replace(tzinfo=timezone.utc)
+        inactive_h = (now - last_active).total_seconds() / 3600
         if inactive_h < INACTIVITY_HOURS:
             return  # still recently active
 
@@ -244,16 +245,17 @@ async def _maybe_send_inactivity_nudge(bot, user: dict, now: datetime) -> None:
         last_reminder_str = user.get("last_reminder_sent", "")
         if last_reminder_str:
             last_reminder = datetime.fromisoformat(last_reminder_str)
+            if last_reminder.tzinfo is None:
+                last_reminder = last_reminder.replace(tzinfo=timezone.utc)
             if last_reminder.date() >= now.date():
                 return
 
         # Only show streak warning if they haven't already practiced today
         streak = user.get("current_streak", 0)
-        today  = now.date().isoformat()
+        today = now.date().isoformat()
         already_practiced_today = last_active_str.startswith(today)
         streak_line = (
-            f"\n\n⚠️ Don't break your <b>{streak}-day streak!</b>"
-            if streak > 1 and not already_practiced_today else ""
+            f"\n\n⚠️ Don't break your <b>{streak}-day streak!</b>" if streak > 1 and not already_practiced_today else ""
         )
         await bot.send_message(
             chat_id=uid,
@@ -290,8 +292,8 @@ async def _maybe_send_weekly_summary(bot, user: dict) -> None:
         if s["weak_areas"]:
             lines.append("🔴 <b>Focus areas for this week:</b>")
             for w in s["weak_areas"]:
-                er       = round(w["error_rate"] * 100)
-                topic    = html.escape(w["topic"].replace("_", " "))
+                er = round(w["error_rate"] * 100)
+                topic = html.escape(w["topic"].replace("_", " "))
                 subtopic = html.escape(w["subtopic"].replace("_", " "))
                 lines.append(f"  • {topic} › {subtopic}  ({er}% errors)")
         else:

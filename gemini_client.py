@@ -31,9 +31,9 @@ _client: Optional[genai.Client] = None
 
 # Primary: pro (best quality); fallbacks: flash → flash-lite.
 MODELS: List[str] = [
-    "gemini-2.5-pro",        #   150 RPM /  1 000 RPD — best quality primary
-    "gemini-2.5-flash",      # 1 000 RPM / 10 000 RPD — fallback
-    "gemini-2.5-flash-lite", # 4 000 RPM / unlimited  — last resort
+    "gemini-2.5-pro",  #   150 RPM /  1 000 RPD — best quality primary
+    "gemini-2.5-flash",  # 1 000 RPM / 10 000 RPD — fallback
+    "gemini-2.5-flash-lite",  # 4 000 RPM / unlimited  — last resort
 ]
 
 
@@ -75,7 +75,7 @@ def _build_question_prompt(
     context: Optional[str],
     avoided_questions: Optional[List[str]] = None,
 ) -> str:
-    diff_label    = difficulty_label(difficulty)
+    diff_label = difficulty_label(difficulty)
     subtopic_desc = get_subtopic_description(topic, subtopic)
 
     type_instructions = {
@@ -203,16 +203,16 @@ def _build_question_prompt(
         ),
     }
 
-    instruction   = type_instructions.get(question_type, "Create a question.")
+    instruction = type_instructions.get(question_type, "Create a question.")
 
     # Reading comprehension questions MUST embed the source text.
     # Without it the learner has nothing to read — they cannot answer.
     if topic == "reading":
         passage_types = {
             "find_information": "a short notice, advertisement, or announcement (Anzeige/Bekanntmachung)",
-            "main_idea":        "a short newspaper article or blog post excerpt",
-            "inference":        "a short letter, email, or narrative passage",
-            "text_types":       "a short sample of the relevant text type (email, letter, instructions, or news article)",
+            "main_idea": "a short newspaper article or blog post excerpt",
+            "inference": "a short letter, email, or narrative passage",
+            "text_types": "a short sample of the relevant text type (email, letter, instructions, or news article)",
         }
         passage_hint = passage_types.get(subtopic, "a short German text (4-8 sentences)")
         instruction += (
@@ -317,10 +317,10 @@ def _build_eval_prompt(question_data: Dict, user_answer: str) -> str:
     return f"""You are a German language teacher evaluating a TELC B1 learner's answer.
 
 Question ({q_type}):
-{question_data.get('question', '')}
+{question_data.get("question", "")}
 {options_block}
 
-Expected correct answer: {question_data.get('correct_answer', '')}{error_introduced_block}
+Expected correct answer: {question_data.get("correct_answer", "")}{error_introduced_block}
 
 Learner's answer: {user_answer}
 
@@ -339,6 +339,7 @@ Required JSON schema:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _extract_json(text: str) -> Dict:
     """Strip markdown fences if the model adds them despite instructions."""
@@ -406,6 +407,7 @@ async def _call_with_fallback(prompt: str, config: Optional[types.GenerateConten
 
 # ── Validators ────────────────────────────────────────────────────────────────
 
+
 async def _verify_error_correction(q: str, ans: str, error_introduced: str) -> None:
     """Second-opinion check: confirm the question sentence has a real grammar error.
 
@@ -434,7 +436,7 @@ async def _verify_error_correction(q: str, ans: str, error_introduced: str) -> N
         'Return ONLY this JSON: {"has_real_error": true/false, "reason": "<one sentence>"}'
     )
     try:
-        text   = await _call_with_fallback(prompt, config=_gen_config())
+        text = await _call_with_fallback(prompt, config=_gen_config())
         result = _extract_json(text)
         if not result.get("has_real_error", True):
             raise ValueError(
@@ -451,6 +453,7 @@ async def _verify_error_correction(q: str, ans: str, error_introduced: str) -> N
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+
 async def generate_question(
     topic: str,
     subtopic: str,
@@ -460,12 +463,12 @@ async def generate_question(
     avoided_questions: Optional[List[str]] = None,
 ) -> Dict:
     prompt = _build_question_prompt(topic, subtopic, question_type, difficulty, recent_context, avoided_questions)
-    text   = await _call_with_fallback(prompt)
-    data   = _extract_json(text)
+    text = await _call_with_fallback(prompt)
+    data = _extract_json(text)
     # Always force topic/subtopic to our chosen values — Gemini sometimes echoes
     # back augmented strings like "verb_conjugation (Perfekt)" which break the
     # TOPICS dict lookup in bot.py.
-    data["topic"]    = topic
+    data["topic"] = topic
     data["subtopic"] = subtopic
     data.setdefault("difficulty", difficulty)
     data.setdefault("word_bank", [])
@@ -480,7 +483,7 @@ async def generate_question(
         # Match an instruction prefix of 5-100 chars ending with ": "
         # e.g. "Ordnen Sie die folgenden Wörter zu einem korrekten Satz: ..."
         #      "Translate the following sentence into German: ..."
-        stripped = re.sub(r'^[A-ZÄÖÜa-z][^:]{4,99}:\s+', '', q_text)
+        stripped = re.sub(r"^[A-ZÄÖÜa-z][^:]{4,99}:\s+", "", q_text)
         if stripped and stripped != q_text:
             logger.info("Stripped instruction prefix from %s question", q_type)
             data["question"] = stripped
@@ -495,8 +498,8 @@ async def generate_question(
         and data.get("options")
     ):
         letter = data["correct_answer"].strip().upper()
-        idx    = ord(letter) - ord("A")
-        opts   = data["options"]
+        idx = ord(letter) - ord("A")
+        opts = data["options"]
         if 0 <= idx < len(opts):
             opt = opts[idx]
             if len(opt) > 2 and opt[1] in ") .":  # strip "A) " / "A. " prefix
@@ -506,20 +509,17 @@ async def generate_question(
     # Validate sentence_building questions.
     if data.get("question_type") == "sentence_building":
         import string as _string
+
         answer_lower = data.get("correct_answer", "").lower()
         tokens = [t.strip() for t in data.get("question", "").split(",") if t.strip()]
         # Reject punctuation-only tokens (e.g. "." or "," included as a standalone token).
         punct_only = [t for t in tokens if all(c in _string.punctuation for c in t)]
         if punct_only:
-            raise ValueError(
-                f"sentence_building scramble contains punctuation-only tokens: {punct_only!r}"
-            )
+            raise ValueError(f"sentence_building scramble contains punctuation-only tokens: {punct_only!r}")
         # Reject multi-word tokens (spaces inside a token, e.g. "zu nehmen", "Der Arzt").
         multi_word = [t for t in tokens if " " in t]
         if multi_word:
-            raise ValueError(
-                f"sentence_building scramble contains multi-word tokens: {multi_word!r}"
-            )
+            raise ValueError(f"sentence_building scramble contains multi-word tokens: {multi_word!r}")
         # Reject tokens missing from the correct answer (likely split compound noun).
         bad = [t for t in tokens if t.lower() not in answer_lower]
         if bad:
@@ -546,7 +546,7 @@ async def generate_question(
     # add or remove words.  A word-count mismatch means the model rewrote content
     # (e.g. "dessen Auto" → "den"), producing a semantically different sentence.
     if data.get("question_type") == "error_correction":
-        q   = data.get("question", "").strip()
+        q = data.get("question", "").strip()
         ans = data.get("correct_answer", "").strip()
         if len(q.split()) != len(ans.split()):
             raise ValueError(
@@ -566,53 +566,41 @@ async def generate_question(
     if data.get("question_type") == "true_false":
         ans = data.get("correct_answer", "").strip()
         if ans not in ("Richtig", "Falsch"):
-            raise ValueError(
-                f"true_false correct_answer must be 'Richtig' or 'Falsch', got: {ans!r}"
-            )
+            raise ValueError(f"true_false correct_answer must be 'Richtig' or 'Falsch', got: {ans!r}")
         if "Aussage:" not in data.get("question", ""):
-            raise ValueError(
-                "true_false question field must contain 'Aussage:' marker separating text from statement"
-            )
+            raise ValueError("true_false question field must contain 'Aussage:' marker separating text from statement")
 
     # Validate text_heading_matching and situation_matching: 4 options, A/B/C/D answer.
     if data.get("question_type") in ("text_heading_matching", "situation_matching"):
         opts = data.get("options", [])
-        ans  = data.get("correct_answer", "").strip().upper()
+        ans = data.get("correct_answer", "").strip().upper()
         if len(opts) < 4:
-            raise ValueError(
-                f"{data['question_type']} needs 4 options, got {len(opts)}"
-            )
+            raise ValueError(f"{data['question_type']} needs 4 options, got {len(opts)}")
         if ans not in ("A", "B", "C", "D"):
-            raise ValueError(
-                f"{data['question_type']} correct_answer must be A/B/C/D, got: {ans!r}"
-            )
+            raise ValueError(f"{data['question_type']} correct_answer must be A/B/C/D, got: {ans!r}")
 
     # Validate word_bank_fill: word_bank has ≥4 words, correct_answer is in the bank.
     if data.get("question_type") == "word_bank_fill":
         bank = data.get("word_bank", [])
-        ans  = data.get("correct_answer", "").strip().lower()
+        ans = data.get("correct_answer", "").strip().lower()
         if len(bank) < 4:
-            raise ValueError(
-                f"word_bank_fill needs at least 4 words in word_bank, got {len(bank)}: {bank!r}"
-            )
+            raise ValueError(f"word_bank_fill needs at least 4 words in word_bank, got {len(bank)}: {bank!r}")
         if "___" not in data.get("question", ""):
             raise ValueError("word_bank_fill question must contain '___' blank marker")
         bank_lower = [w.strip().lower() for w in bank]
         if ans not in bank_lower:
-            raise ValueError(
-                f"word_bank_fill correct_answer {ans!r} not found in word_bank {bank!r}"
-            )
+            raise ValueError(f"word_bank_fill correct_answer {ans!r} not found in word_bank {bank!r}")
 
     return data
 
 
 async def evaluate_answer(question_data: Dict, user_answer: str) -> Dict:
     prompt = _build_eval_prompt(question_data, user_answer)
-    text   = await _call_with_fallback(prompt)
-    data   = _extract_json(text)
+    text = await _call_with_fallback(prompt)
+    data = _extract_json(text)
     data.setdefault("is_correct", False)
-    data.setdefault("score",      0.0)
-    data.setdefault("feedback",   "")
+    data.setdefault("score", 0.0)
+    data.setdefault("feedback", "")
     # Gemini occasionally returns `correction` as a nested dict instead of a
     # plain string.  Flatten it so the bot doesn't display a raw Python object.
     correction = data.get("correction")
@@ -646,11 +634,11 @@ def _build_explain_prompt(
     return f"""You are a German language teacher helping a TELC B1 learner understand a concept deeply.
 
 Question ({q_type}):
-{question_data.get('question', '')}{options_block}
+{question_data.get("question", "")}{options_block}
 
-Correct answer: {question_data.get('correct_answer', '')}
+Correct answer: {question_data.get("correct_answer", "")}
 Learner's answer: {user_answer}
-Previous feedback given: {previous_feedback or 'None'}
+Previous feedback given: {previous_feedback or "None"}
 
 {follow_up}
 
@@ -679,25 +667,25 @@ def _build_hint_prompt(question_data: Dict, hint_count: int) -> str:
         else "Give a stronger second hint — more specific, but still don't reveal the answer directly."
     )
     type_guidance = {
-        "multiple_choice":        "Help eliminate one or two wrong options with a brief reason.",
-        "fill_blank":             "Hint at the grammar rule or word form needed (e.g. 'Think about which case this preposition takes').",
-        "translation_to_german":  "Hint at a key word or grammatical structure needed in German.",
+        "multiple_choice": "Help eliminate one or two wrong options with a brief reason.",
+        "fill_blank": "Hint at the grammar rule or word form needed (e.g. 'Think about which case this preposition takes').",
+        "translation_to_german": "Hint at a key word or grammatical structure needed in German.",
         "translation_to_english": "Hint at the meaning of a key German word or phrase in the sentence.",
-        "error_correction":       "Point to which part of the sentence contains the error (e.g. beginning/middle/end, or which word type is wrong).",
-        "sentence_building":      "Suggest which word should come first, or name the grammatical rule that governs the word order.",
-        "short_answer":           "Point to which part of the text or scenario contains the answer.",
-        "true_false":             "Point to which part of the text supports or contradicts the Aussage statement, without revealing the answer.",
-        "text_heading_matching":  "Hint at the main theme or key concept of the text without naming the correct heading.",
-        "situation_matching":     "Point out which key detail in the situation narrows down the correct notice.",
-        "word_bank_fill":         "Hint at the grammatical role the missing word plays (e.g. 'Think about which conjunction introduces a reason').",
+        "error_correction": "Point to which part of the sentence contains the error (e.g. beginning/middle/end, or which word type is wrong).",
+        "sentence_building": "Suggest which word should come first, or name the grammatical rule that governs the word order.",
+        "short_answer": "Point to which part of the text or scenario contains the answer.",
+        "true_false": "Point to which part of the text supports or contradicts the Aussage statement, without revealing the answer.",
+        "text_heading_matching": "Hint at the main theme or key concept of the text without naming the correct heading.",
+        "situation_matching": "Point out which key detail in the situation narrows down the correct notice.",
+        "word_bank_fill": "Hint at the grammatical role the missing word plays (e.g. 'Think about which conjunction introduces a reason').",
     }.get(q_type, "Give a gentle directional hint.")
 
     return f"""You are helping a German B1 learner who is stuck on a question.
 
 Question ({q_type}):
-{question_data.get('question', '')}{options_block}
+{question_data.get("question", "")}{options_block}
 
-Correct answer (DO NOT reveal this): {question_data.get('correct_answer', '')}
+Correct answer (DO NOT reveal this): {question_data.get("correct_answer", "")}
 
 {depth}
 Type-specific guidance: {type_guidance}
@@ -722,7 +710,7 @@ async def explain_further(
     depth: int = 0,
 ) -> str:
     prompt = _build_explain_prompt(question_data, user_answer, previous_feedback, depth)
-    text   = await _call_with_fallback(prompt, config=_text_gen_config())
+    text = await _call_with_fallback(prompt, config=_text_gen_config())
     return text.strip()
 
 
@@ -761,10 +749,10 @@ def _build_voice_eval_prompt(question_data: Dict) -> str:
 The audio attached is the learner's voice message response to this question.
 
 Question ({q_type}):
-{question_data.get('question', '')}
+{question_data.get("question", "")}
 {options_block}
 
-Expected correct answer: {question_data.get('correct_answer', '')}
+Expected correct answer: {question_data.get("correct_answer", "")}
 
 Your tasks:
 1. Transcribe exactly what the learner said in the audio.

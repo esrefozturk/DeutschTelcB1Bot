@@ -45,7 +45,15 @@ from adaptive import (
     pick_next_params,
 )
 from database import Database
-from gemini_client import GeminiQuotaExceeded, evaluate_answer, evaluate_voice_answer, explain_further, generate_question, get_hint, init_gemini
+from gemini_client import (
+    GeminiQuotaExceeded,
+    evaluate_answer,
+    evaluate_voice_answer,
+    explain_further,
+    generate_question,
+    get_hint,
+    init_gemini,
+)
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -58,10 +66,10 @@ logger = logging.getLogger(__name__)
 # ── Config ────────────────────────────────────────────────────────────────────
 
 load_dotenv()
-TELEGRAM_TOKEN  = os.environ["TELEGRAM_TOKEN"]
-GEMINI_API_KEY  = os.environ["GEMINI_API_KEY"]
-DATABASE_PATH   = os.getenv("DATABASE_PATH", "deutsch_bot.db")
-ADMIN_CHAT_ID   = os.getenv("ADMIN_CHAT_ID")  # set in Lambda env / .env
+TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+DATABASE_PATH = os.getenv("DATABASE_PATH", "deutsch_bot.db")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # set in Lambda env / .env
 
 # ── Static messages (HTML) ────────────────────────────────────────────────────
 
@@ -99,26 +107,27 @@ HELP_MSG = (
 
 # Streak milestone messages
 _STREAK_MILESTONES = {
-    3:   "🌱 <b>3-day streak!</b> You're building a habit!",
-    7:   "⭐ <b>7-day streak!</b> One full week — Wunderbar!",
-    14:  "🌟 <b>14-day streak!</b> Two weeks of German!",
-    30:  "🏆 <b>30-day streak!</b> An entire month — incredible!",
-    50:  "💎 <b>50-day streak!</b> Unstoppable!",
+    3: "🌱 <b>3-day streak!</b> You're building a habit!",
+    7: "⭐ <b>7-day streak!</b> One full week — Wunderbar!",
+    14: "🌟 <b>14-day streak!</b> Two weeks of German!",
+    30: "🏆 <b>30-day streak!</b> An entire month — incredible!",
+    50: "💎 <b>50-day streak!</b> Unstoppable!",
     100: "🔱 <b>100-day streak!</b> You're a legend!",
 }
 
 # Exam question distribution across topics
 _EXAM_DISTRIBUTION = [
-    ("grammar",    8),
+    ("grammar", 8),
     ("vocabulary", 6),
-    ("reading",    4),
-    ("writing",    2),
+    ("reading", 4),
+    ("writing", 2),
 ]
 
 _QUOTA_MSG = "📵 <b>Daily AI quota reached.</b> The quota resets at midnight UTC. Try again then!"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _esc(text: str) -> str:
     return html.escape(str(text))
@@ -127,7 +136,7 @@ def _esc(text: str) -> str:
 def _safe_html(text: str) -> str:
     """Escape AI-generated text for Telegram HTML mode, preserving <b>/<i> tags."""
     escaped = html.escape(str(text))
-    return re.sub(r'&lt;(/?(?:b|i))&gt;', r'<\1>', escaped)
+    return re.sub(r"&lt;(/?(?:b|i))&gt;", r"<\1>", escaped)
 
 
 def _difficulty_stars(d: float) -> str:
@@ -152,10 +161,12 @@ def _question_keyboard(question: dict, hint_count: int = 0) -> Optional[InlineKe
         for opt in question["options"]:
             rows.append([InlineKeyboardButton(opt, callback_data=f"answer:{opt[0]}")])
     elif q_type == "true_false":
-        rows.append([
-            InlineKeyboardButton("✅ Richtig", callback_data="answer:Richtig"),
-            InlineKeyboardButton("❌ Falsch", callback_data="answer:Falsch"),
-        ])
+        rows.append(
+            [
+                InlineKeyboardButton("✅ Richtig", callback_data="answer:Richtig"),
+                InlineKeyboardButton("❌ Falsch", callback_data="answer:Falsch"),
+            ]
+        )
     if hint_count < _MAX_HINTS:
         label = "🔍 Get Hint"
         rows.append([InlineKeyboardButton(label, callback_data="hint")])
@@ -165,26 +176,32 @@ def _question_keyboard(question: dict, hint_count: int = 0) -> Optional[InlineKe
 
 def _action_keyboard() -> InlineKeyboardMarkup:
     """Buttons after normal evaluation."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💡 Explain More", callback_data="explain"),
-         InlineKeyboardButton("➡️ Next Question", callback_data="next_q")],
-        [InlineKeyboardButton("🚩 Report", callback_data="report:answer")],
-    ])
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("💡 Explain More", callback_data="explain"),
+                InlineKeyboardButton("➡️ Next Question", callback_data="next_q"),
+            ],
+            [InlineKeyboardButton("🚩 Report", callback_data="report:answer")],
+        ]
+    )
 
 
 def _exam_keyboard() -> InlineKeyboardMarkup:
     """Button after exam question evaluation — no explanation during exam."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➡️ Next Question", callback_data="exam_next")],
-        [InlineKeyboardButton("🚩 Report", callback_data="report:answer")],
-    ])
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("➡️ Next Question", callback_data="exam_next")],
+            [InlineKeyboardButton("🚩 Report", callback_data="report:answer")],
+        ]
+    )
 
 
 def _fmt_question(q: dict, is_first: bool = False, progress: str = "") -> str:
-    topic_label    = TOPICS.get(q["topic"], {}).get("label", q["topic"])
+    topic_label = TOPICS.get(q["topic"], {}).get("label", q["topic"])
     subtopic_label = TOPICS.get(q["topic"], {}).get("subtopics", {}).get(q["subtopic"], q["subtopic"])
-    stars          = _difficulty_stars(q.get("difficulty", 2))
-    qtype_pretty   = q["question_type"].replace("_", " ").title()
+    stars = _difficulty_stars(q.get("difficulty", 2))
+    qtype_pretty = q["question_type"].replace("_", " ").title()
 
     if progress:
         divider = f"📝 <b>{_esc(progress)}</b>\n\n"
@@ -250,20 +267,23 @@ def _build_exam_plan(performance: Optional[list] = None) -> dict:
         if count > len(subtopics):
             chosen += random.choices(subtopics, k=count - len(subtopics))
         for subtopic in chosen:
-            q_type     = random.choice(QUESTION_TYPES_BY_TOPIC[topic])
-            raw_diff   = perf_map.get((topic, subtopic), 2.5)
+            q_type = random.choice(QUESTION_TYPES_BY_TOPIC[topic])
+            raw_diff = perf_map.get((topic, subtopic), 2.5)
             difficulty = max(_EXAM_MIN_DIFFICULTY, min(_EXAM_MAX_DIFFICULTY, raw_diff))
-            plan.append({
-                "topic":      topic,
-                "subtopic":   subtopic,
-                "q_type":     q_type,
-                "difficulty": difficulty,
-            })
+            plan.append(
+                {
+                    "topic": topic,
+                    "subtopic": subtopic,
+                    "q_type": q_type,
+                    "difficulty": difficulty,
+                }
+            )
     random.shuffle(plan)
     return {"active": True, "total": 20, "done": 0, "plan": plan, "results": []}
 
 
 # ── Core question / answer logic ──────────────────────────────────────────────
+
 
 async def _send_question(
     db: Database,
@@ -295,7 +315,7 @@ async def _send_question(
             return
 
     performance = db.get_all_performance(user_id)
-    avoided     = db.get_recent_questions(user_id)
+    avoided = db.get_recent_questions(user_id)
     avoided_set = set(avoided)
 
     question = None
@@ -306,16 +326,16 @@ async def _send_question(
         for i, cached_q in enumerate(cache):
             if cached_q.get("question", "")[:100].strip() not in avoided_set:
                 question = cached_q
-                db.set_question_cache(user_id, cache[:i] + cache[i + 1:])
+                db.set_question_cache(user_id, cache[:i] + cache[i + 1 :])
                 logger.info("Served cached question for user %s (cache had %d)", user_id, len(cache))
                 break
 
     if question is None:
         # Cache miss — generate live
         if forced_topic and forced_subtopic:
-            topic    = forced_topic
+            topic = forced_topic
             subtopic = forced_subtopic
-            q_type   = random.choice(QUESTION_TYPES_BY_TOPIC[topic])
+            q_type = random.choice(QUESTION_TYPES_BY_TOPIC[topic])
             perf_row = db.get_topic_performance(user_id, topic, subtopic)
             difficulty = perf_row.get("difficulty", 2.0)
         else:
@@ -355,9 +375,12 @@ async def _send_question(
             )
             return
 
-    text         = _fmt_question(question, is_first=is_first)
+    text = _fmt_question(question, is_first=is_first)
     reply_markup = _question_keyboard(question)  # MC/matching/true_false buttons + hint
-    if question["question_type"] in ("multiple_choice", "text_heading_matching", "situation_matching") and "options" in question:
+    if (
+        question["question_type"] in ("multiple_choice", "text_heading_matching", "situation_matching")
+        and "options" in question
+    ):
         options_text = "\n".join(_esc(opt) for opt in question["options"])
         text += f"\n\n{options_text}"
 
@@ -381,20 +404,20 @@ async def _send_exam_question(
     context: ContextTypes.DEFAULT_TYPE,
     exam_state: dict,
 ):
-    done  = exam_state["done"]
+    done = exam_state["done"]
     total = exam_state["total"]
-    plan  = exam_state["plan"]
+    plan = exam_state["plan"]
 
     if done >= total:
         await _send_exam_summary(db, user_id, chat_id, context, exam_state)
         return
 
-    params     = plan[done]
-    topic      = params["topic"]
-    subtopic   = params["subtopic"]
-    q_type     = params["q_type"]
+    params = plan[done]
+    topic = params["topic"]
+    subtopic = params["subtopic"]
+    q_type = params["q_type"]
     difficulty = params["difficulty"]
-    progress   = f"Question {done + 1} of {total}"
+    progress = f"Question {done + 1} of {total}"
 
     avoided = db.get_recent_questions(user_id)
 
@@ -430,10 +453,13 @@ async def _send_exam_question(
 
     question["_exam_mode"] = True
 
-    text         = _fmt_question(question, is_first=True, progress=progress)
+    text = _fmt_question(question, is_first=True, progress=progress)
     # Exam mode: MC/matching/true_false buttons only, no hint (_MAX_HINTS suppresses it)
     reply_markup = _question_keyboard(question, hint_count=_MAX_HINTS)
-    if question["question_type"] in ("multiple_choice", "text_heading_matching", "situation_matching") and "options" in question:
+    if (
+        question["question_type"] in ("multiple_choice", "text_heading_matching", "situation_matching")
+        and "options" in question
+    ):
         options_text = "\n".join(_esc(opt) for opt in question["options"])
         text += f"\n\n{options_text}"
 
@@ -454,32 +480,27 @@ async def _send_exam_summary(
     context: ContextTypes.DEFAULT_TYPE,
     exam_state: dict,
 ):
-    results   = exam_state.get("results", [])
-    total     = len(results)
+    results = exam_state.get("results", [])
+    total = len(results)
     if total == 0:
         await context.bot.send_message(chat_id=chat_id, text="No results to summarise.")
         db.set_exam_state(user_id, None)
         db.set_pending_question(user_id, None)
         return
 
-    correct   = sum(1 for r in results if r["is_correct"])
+    correct = sum(1 for r in results if r["is_correct"])
     avg_score = sum(r["score"] for r in results) / total
 
-    grade = (
-        "A" if avg_score >= 0.90 else
-        "B" if avg_score >= 0.75 else
-        "C" if avg_score >= 0.60 else
-        "D"
-    )
+    grade = "A" if avg_score >= 0.90 else "B" if avg_score >= 0.75 else "C" if avg_score >= 0.60 else "D"
 
     topic_stats: dict = {}
     for r in results:
         t = r["topic"]
         if t not in topic_stats:
             topic_stats[t] = {"correct": 0, "total": 0, "score": 0.0}
-        topic_stats[t]["total"]   += 1
+        topic_stats[t]["total"] += 1
         topic_stats[t]["correct"] += int(r["is_correct"])
-        topic_stats[t]["score"]   += r["score"]
+        topic_stats[t]["score"] += r["score"]
 
     lines = [
         "📝 <b>Exam Complete!</b>",
@@ -489,7 +510,7 @@ async def _send_exam_summary(
         "<b>Topic breakdown:</b>",
     ]
     for topic, stats in topic_stats.items():
-        label   = _esc(TOPICS[topic]["label"])
+        label = _esc(TOPICS[topic]["label"])
         t_score = round(stats["score"] / stats["total"] * 100)
         lines.append(f"  • {label}: {stats['correct']}/{stats['total']} ({t_score}%)")
 
@@ -533,8 +554,8 @@ async def _record_answer(
         db.increment_daily_usage(user_id)
 
     is_correct = result.get("is_correct", False)
-    score      = result.get("score", 0.0)
-    feedback   = result.get("feedback", "")
+    score = result.get("score", 0.0)
+    feedback = result.get("feedback", "")
     correction = result.get("correction", "")
 
     if score >= 0.9:
@@ -556,10 +577,15 @@ async def _record_answer(
     # Update performance (SRS + difficulty)
     old_perf = db.get_topic_performance(user_id, pending["topic"], pending["subtopic"])
     new_diff = adjust_difficulty(old_perf.get("difficulty", 2.0), is_correct)
-    new_ri   = next_review_interval(old_perf.get("review_interval", 1.0), is_correct)
+    new_ri = next_review_interval(old_perf.get("review_interval", 1.0), is_correct)
     db.update_performance(
-        user_id, pending["topic"], pending["subtopic"],
-        is_correct, score, new_diff, new_ri,
+        user_id,
+        pending["topic"],
+        pending["subtopic"],
+        is_correct,
+        score,
+        new_diff,
+        new_ri,
     )
 
     # Update streak (only in regular practice mode, not exam)
@@ -576,31 +602,31 @@ async def _record_answer(
     msg_id = pending.get("_question_msg_id")
     if msg_id:
         try:
-            await context.bot.edit_message_reply_markup(
-                chat_id=chat_id, message_id=msg_id, reply_markup=None
-            )
+            await context.bot.edit_message_reply_markup(chat_id=chat_id, message_id=msg_id, reply_markup=None)
         except Exception:
             pass
 
     # Choose keyboard and update exam state if applicable
     if is_exam:
-        keyboard   = _exam_keyboard()
+        keyboard = _exam_keyboard()
         exam_state = db.get_exam_state(user_id)
         if exam_state:
             exam_state["done"] += 1
-            exam_state["results"].append({
-                "topic":      pending["topic"],
-                "subtopic":   pending["subtopic"],
-                "is_correct": is_correct,
-                "score":      score,
-            })
+            exam_state["results"].append(
+                {
+                    "topic": pending["topic"],
+                    "subtopic": pending["subtopic"],
+                    "is_correct": is_correct,
+                    "score": score,
+                }
+            )
             db.set_exam_state(user_id, exam_state)
     else:
         keyboard = _action_keyboard()
 
     # Keep pending with answer context for "Explain More"
-    pending["_answered"]      = True
-    pending["_user_answer"]   = user_answer
+    pending["_answered"] = True
+    pending["_user_answer"] = user_answer
     pending["_last_feedback"] = feedback + (f"\nCorrection: {correction}" if correction else "")
     pending["_explain_depth"] = 0
     db.set_pending_question(user_id, pending)
@@ -649,6 +675,7 @@ async def _handle_answer(
 
 # ── Command handlers ──────────────────────────────────────────────────────────
 
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db: Database = context.bot_data["db"]
     user = update.effective_user
@@ -685,7 +712,7 @@ async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
     confirm = (context.args or [""])[0].lower() == "confirm"
     exam_state = db.get_exam_state(user.id)
     if exam_state and exam_state.get("active") and exam_state.get("done", 0) > 0 and not confirm:
-        done  = exam_state["done"]
+        done = exam_state["done"]
         total = exam_state["total"]
         await update.message.reply_text(
             f"⚠️ <b>You have an exam in progress</b> ({done}/{total} questions done).\n\n"
@@ -736,9 +763,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s = db.get_stats_summary(user_id)
 
     if s["total_questions"] == 0:
-        await update.message.reply_text(
-            "No stats yet — answer a few questions first! Type /next to start."
-        )
+        await update.message.reply_text("No stats yet — answer a few questions first! Type /next to start.")
         return
 
     streak = s.get("streak", 0)
@@ -746,7 +771,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Daily usage / limit line
     user_data = db.get_user(user_id)
-    used  = db.get_daily_usage(user_id)
+    used = db.get_daily_usage(user_id)
     limit = _daily_limit(user_data)
     if limit == -1:
         quota_line = "Today: <b>unlimited</b> questions"
@@ -773,17 +798,15 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if s["weak_areas"]:
         lines.append("🔴 <b>Areas to focus on:</b>")
         for w in s["weak_areas"]:
-            er       = round(w["error_rate"] * 100)
-            avg      = round(w.get("avg_score", 0) * 100)
-            topic    = _esc(w["topic"].replace("_", " "))
+            er = round(w["error_rate"] * 100)
+            avg = round(w.get("avg_score", 0) * 100)
+            topic = _esc(w["topic"].replace("_", " "))
             subtopic = _esc(w["subtopic"].replace("_", " "))
             lines.append(f"  • {topic} › {subtopic}  ({er}% errors, {avg}% avg score)")
     else:
         lines.append("🟢 No major weak spots yet — keep going!")
 
-    await update.message.reply_text(
-        "\n".join(lines), parse_mode=ParseMode.HTML
-    )
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -795,12 +818,10 @@ async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for key, data in TOPICS.items():
             subtopics = ", ".join(data["subtopics"].keys())
             lines.append(f"<b>{_esc(key)}</b>: {_esc(subtopics)}")
-        await update.message.reply_text(
-            "\n".join(lines), parse_mode=ParseMode.HTML
-        )
+        await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
         return
 
-    topic_arg    = args[0].lower()
+    topic_arg = args[0].lower()
     subtopic_arg = args[1].lower() if len(args) > 1 else None
 
     if topic_arg not in TOPICS:
@@ -852,7 +873,7 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    done  = exam_state.get("done", 0)
+    done = exam_state.get("done", 0)
     total = exam_state.get("total", 20)
     db.set_exam_state(user.id, None)
     db.set_pending_question(user.id, None)
@@ -881,8 +902,8 @@ async def cmd_request_more_quota(update: Update, context: ContextTypes.DEFAULT_T
     user = update.effective_user
     user_data = db.get_user(user.id)
     streak = (user_data or {}).get("current_streak", 0)
-    limit  = _daily_limit(user_data)
-    used   = db.get_daily_usage(user.id)
+    limit = _daily_limit(user_data)
+    used = db.get_daily_usage(user.id)
     user_msg = " ".join(context.args) if context.args else ""
 
     if not user_msg:
@@ -923,8 +944,7 @@ async def cmd_request_more_quota(update: Update, context: ContextTypes.DEFAULT_T
             logger.warning("Failed to notify admin of quota request from user %s", user.id)
 
     await update.message.reply_text(
-        "✅ <b>Request sent!</b>\n\n"
-        "We'll review your request and get back to you shortly.",
+        "✅ <b>Request sent!</b>\n\nWe'll review your request and get back to you shortly.",
         parse_mode=ParseMode.HTML,
     )
 
@@ -972,6 +992,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Voice message handler ──────────────────────────────────────────────────────
 
+
 async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db: Database = context.bot_data["db"]
     user = update.effective_user
@@ -992,7 +1013,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Download the voice file from Telegram
     voice = update.message.voice
     try:
-        file        = await context.bot.get_file(voice.file_id)
+        file = await context.bot.get_file(voice.file_id)
         audio_bytes = await file.download_as_bytearray()
     except Exception as exc:
         logger.error("Failed to download voice file: %s", exc)
@@ -1019,7 +1040,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if transcription:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"🎤 <i>You said:</i> \"{_esc(transcription)}\"",
+            text=f'🎤 <i>You said:</i> "{_esc(transcription)}"',
             parse_mode=ParseMode.HTML,
         )
 
@@ -1027,6 +1048,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── Callback handler (inline keyboard answers) ────────────────────────────────
+
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1081,7 +1103,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Use pre-bundled hints from the question JSON first (no Gemini call needed).
         # Fall back to a live Gemini call for backward compat with older pending questions.
         bundled_key = f"hint_{hint_count + 1}"
-        hint_text   = pending.get(bundled_key)
+        hint_text = pending.get(bundled_key)
         if not hint_text:
             try:
                 await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
@@ -1154,7 +1176,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.set_pending_question(user.id, pending)
 
     elif data.startswith("report:"):
-        stage   = data.split(":", 1)[1]  # "question" or "answer"
+        stage = data.split(":", 1)[1]  # "question" or "answer"
         pending = db.get_pending_question(user.id)
         if pending:
             try:
@@ -1173,6 +1195,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+
 def main():
     init_gemini(GEMINI_API_KEY)
     db = Database(DATABASE_PATH)
@@ -1180,14 +1203,14 @@ def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.bot_data["db"] = db
 
-    app.add_handler(CommandHandler("start",  cmd_start))
-    app.add_handler(CommandHandler("next",   cmd_next))
-    app.add_handler(CommandHandler("exam",   cmd_exam))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("next", cmd_next))
+    app.add_handler(CommandHandler("exam", cmd_exam))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
-    app.add_handler(CommandHandler("stats",  cmd_stats))
-    app.add_handler(CommandHandler("topic",  cmd_topic))
-    app.add_handler(CommandHandler("help",   cmd_help))
-    app.add_handler(CommandHandler("pause",  cmd_pause))
+    app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("topic", cmd_topic))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("pause", cmd_pause))
     app.add_handler(CommandHandler("request_more_quota", cmd_request_more_quota))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.VOICE, on_voice))
