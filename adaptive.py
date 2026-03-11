@@ -18,49 +18,49 @@ TOPICS: Dict[str, Dict] = {
     "grammar": {
         "label": "Grammar",
         "subtopics": {
-            "cases":              "Nominativ / Akkusativ / Dativ / Genitiv",
-            "verb_conjugation":   "Present, Perfekt, Präteritum, Future",
-            "modal_verbs":        "können, müssen, dürfen, wollen, sollen, möchten",
-            "prepositions":       "two-way, dative-only, accusative-only prepositions",
-            "relative_clauses":   "Relativsätze with der/die/das/dessen",
-            "konjunktiv_2":       "würde, hätte, wäre – polite requests and hypotheticals",
-            "passive":            "Passiv with werden / sein",
-            "adjective_endings":  "strong, weak, mixed declension",
-            "conjunctions":       "weil, dass, obwohl, wenn, als, damit, um…zu",
+            "cases": "Nominativ / Akkusativ / Dativ / Genitiv",
+            "verb_conjugation": "Present, Perfekt, Präteritum, Future",
+            "modal_verbs": "können, müssen, dürfen, wollen, sollen, möchten",
+            "prepositions": "two-way, dative-only, accusative-only prepositions",
+            "relative_clauses": "Relativsätze with der/die/das/dessen",
+            "konjunktiv_2": "würde, hätte, wäre – polite requests and hypotheticals",
+            "passive": "Passiv with werden / sein",
+            "adjective_endings": "strong, weak, mixed declension",
+            "conjunctions": "weil, dass, obwohl, wenn, als, damit, um…zu",
         },
     },
     "vocabulary": {
         "label": "Vocabulary",
         "subtopics": {
-            "daily_life":         "Everyday activities and time expressions",
-            "work_profession":    "Job types, workplace, applications, CVs",
-            "travel_transport":   "Transportation, directions, booking, accommodation",
-            "health_body":        "Body parts, illnesses, doctor/pharmacy visits",
+            "daily_life": "Everyday activities and time expressions",
+            "work_profession": "Job types, workplace, applications, CVs",
+            "travel_transport": "Transportation, directions, booking, accommodation",
+            "health_body": "Body parts, illnesses, doctor/pharmacy visits",
             "family_relationships": "Family, personal relationships, social life",
-            "education":          "School, university, courses, qualifications",
-            "shopping_money":     "Prices, banking, consumer vocabulary",
-            "housing":            "Rooms, furniture, renting, utilities",
-            "food_cooking":       "Ingredients, recipes, restaurant, ordering",
-            "culture_leisure":    "Hobbies, sports, events, media",
-            "environment":        "Nature, recycling, climate, sustainability",
+            "education": "School, university, courses, qualifications",
+            "shopping_money": "Prices, banking, consumer vocabulary",
+            "housing": "Rooms, furniture, renting, utilities",
+            "food_cooking": "Ingredients, recipes, restaurant, ordering",
+            "culture_leisure": "Hobbies, sports, events, media",
+            "environment": "Nature, recycling, climate, sustainability",
         },
     },
     "reading": {
         "label": "Reading Comprehension",
         "subtopics": {
-            "main_idea":          "Identifying the main idea of a text",
-            "find_information":   "Locating specific facts in notices, ads, articles",
-            "text_types":         "Emails, letters, instructions, news articles",
-            "inference":          "Reading between the lines – implied meaning",
+            "main_idea": "Identifying the main idea of a text",
+            "find_information": "Locating specific facts in notices, ads, articles",
+            "text_types": "Emails, letters, instructions, news articles",
+            "inference": "Reading between the lines – implied meaning",
         },
     },
     "writing": {
         "label": "Writing",
         "subtopics": {
-            "formal_letter":      "Formal letters – applications, complaints, requests",
-            "informal_message":   "Casual emails/messages to friends or colleagues",
-            "opinion_text":       "Expressing and justifying personal opinions",
-            "describing_events":  "Describing past events or experiences",
+            "formal_letter": "Formal letters – applications, complaints, requests",
+            "informal_message": "Casual emails/messages to friends or colleagues",
+            "opinion_text": "Expressing and justifying personal opinions",
+            "describing_events": "Describing past events or experiences",
         },
     },
 }
@@ -100,8 +100,8 @@ QUESTION_TYPES_BY_TOPIC: Dict[str, List[str]] = {
 
 MIN_DIFFICULTY = 1.0
 MAX_DIFFICULTY = 5.0
-STEP_UP        = 0.5   # after a correct answer
-STEP_DOWN      = 0.75  # after a wrong answer  (bigger step down → protective)
+STEP_UP = 0.5  # after a correct answer
+STEP_DOWN = 0.75  # after a wrong answer  (bigger step down → protective)
 
 
 def adjust_difficulty(current: float, is_correct: bool) -> float:
@@ -125,7 +125,7 @@ def difficulty_label(d: float) -> str:
 
 # ── Spaced Repetition (SRS) ───────────────────────────────────────────────────
 
-SRS_MIN_INTERVAL = 1.0   # days
+SRS_MIN_INTERVAL = 1.0  # days
 SRS_MAX_INTERVAL = 30.0  # days
 
 
@@ -154,7 +154,7 @@ def _srs_factor(last_tested: str, review_interval: float) -> float:
         if last_dt.tzinfo is None:
             last_dt = last_dt.replace(tzinfo=timezone.utc)
         days_since = (datetime.now(timezone.utc) - last_dt).total_seconds() / 86400
-        overdue    = max(0.0, days_since - review_interval)
+        overdue = max(0.0, days_since - review_interval)
         return 1.0 + min(overdue, 14.0) * 0.3
     except Exception:
         return 1.0
@@ -164,10 +164,10 @@ def _srs_factor(last_tested: str, review_interval: float) -> float:
 
 # Base topic weights (tune as needed)
 _BASE_WEIGHTS: Dict[str, float] = {
-    "grammar":    3.0,
+    "grammar": 3.0,
     "vocabulary": 3.0,
-    "reading":    2.0,
-    "writing":    1.5,
+    "reading": 2.0,
+    "writing": 1.5,
 }
 
 
@@ -187,9 +187,7 @@ def pick_next_params(
       srs_factor rises the longer a subtopic is overdue for review,
       so items due for spaced repetition surface more often.
     """
-    perf: Dict[Tuple[str, str], Dict] = {
-        (r["topic"], r["subtopic"]): r for r in performance_rows
-    }
+    perf: Dict[Tuple[str, str], Dict] = {(r["topic"], r["subtopic"]): r for r in performance_rows}
 
     candidates: List[Tuple[float, str, str, float]] = []
 
@@ -198,16 +196,16 @@ def pick_next_params(
         for subtopic in topic_data["subtopics"]:
             key = (topic, subtopic)
             if key in perf:
-                p    = perf[key]
-                er   = _error_rate(p["correct"], p["incorrect"])
+                p = perf[key]
+                er = _error_rate(p["correct"], p["incorrect"])
                 diff = p["difficulty"]
-                srs  = _srs_factor(p.get("last_tested", ""), p.get("review_interval", 1.0))
+                srs = _srs_factor(p.get("last_tested", ""), p.get("review_interval", 1.0))
             else:
-                er   = 0.5   # unseen → treat as 50% error (needs practice)
+                er = 0.5  # unseen → treat as 50% error (needs practice)
                 diff = 2.0
-                srs  = 2.0   # never tested → high priority
+                srs = 2.0  # never tested → high priority
 
-            weight = base_w * (1.0 + er ** 2) * srs
+            weight = base_w * (1.0 + er**2) * srs
             candidates.append((weight, topic, subtopic, diff))
 
     # Weighted random selection
