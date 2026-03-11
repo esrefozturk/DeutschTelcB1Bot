@@ -170,10 +170,12 @@ _CACHE_TARGET = 5  # questions to keep ready per user
 
 
 async def _run_cache_refill(users: list, now: datetime) -> None:
-    """Pre-generate questions for recently active users so the next /next is instant."""
+    """Pre-generate questions for recently active unlimited-tier users so the next /next is instant."""
     cutoff = now.timestamp() - 86400  # active in last 24 h
     active = []
     for u in users:
+        if u.get("tier") != "unlimited":
+            continue
         la = u.get("last_active", "")
         if la:
             try:
@@ -185,7 +187,7 @@ async def _run_cache_refill(users: list, now: datetime) -> None:
 
     if not active:
         return
-    logger.info("Cache refill: %d active users", len(active))
+    logger.info("Cache refill: %d active unlimited users", len(active))
     await asyncio.gather(*[_refill_user_cache(u) for u in active], return_exceptions=True)
 
 
