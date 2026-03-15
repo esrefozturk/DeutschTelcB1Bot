@@ -66,6 +66,9 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 # How long without practice before we send a nudge
 INACTIVITY_HOURS = 4
 
+# After this many days of inactivity, auto-pause the user and stop nudging
+AUTO_PAUSE_DAYS = 7
+
 # ── One-time cold-start initialization ───────────────────────────────────────
 
 gemini_client.init_gemini(GEMINI_API_KEY)
@@ -240,6 +243,12 @@ async def _maybe_send_inactivity_nudge(bot, user: dict, now: datetime) -> None:
         inactive_h = (now - last_active).total_seconds() / 3600
         if inactive_h < INACTIVITY_HOURS:
             return  # still recently active
+
+        # Auto-pause users inactive for 7+ days — no more nudges until they return
+        if inactive_h >= AUTO_PAUSE_DAYS * 24:
+            _db.set_paused(uid, True)
+            logger.info("Auto-paused user %s (inactive %.1fh)", uid, inactive_h)
+            return
 
         # Respect cooldown — max one reminder per calendar day (UTC)
         last_reminder_str = user.get("last_reminder_sent", "")
