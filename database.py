@@ -87,7 +87,8 @@ class Database:
                 INSERT INTO users (user_id, username, first_name)
                 VALUES (?, ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,
-                                                   first_name=excluded.first_name
+                                                   first_name=excluded.first_name,
+                                                   is_paused=0
                 """,
                 (user_id, username, first_name),
             )
