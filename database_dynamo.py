@@ -52,14 +52,12 @@ class DynamoDatabase:
                 "SET username    = :u, "
                 "    first_name  = :f, "
                 "    created_at  = if_not_exists(created_at, :now), "
-                "    last_active = :now, "
-                "    is_paused   = :zero"
+                "    last_active = :now"
             ),
             ExpressionAttributeValues={
                 ":u": username,
                 ":f": first_name,
                 ":now": _now(),
-                ":zero": 0,
             },
         )
 
