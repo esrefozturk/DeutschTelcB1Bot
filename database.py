@@ -18,12 +18,14 @@ class Database:
         with self._conn() as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS users (
-                    user_id           INTEGER PRIMARY KEY,
-                    username          TEXT,
-                    first_name        TEXT,
-                    created_at        TEXT DEFAULT (datetime('now')),
-                    current_streak    INTEGER DEFAULT 0,
-                    last_streak_date  TEXT
+                    user_id             INTEGER PRIMARY KEY,
+                    username            TEXT,
+                    first_name          TEXT,
+                    created_at          TEXT DEFAULT (datetime('now')),
+                    current_streak      INTEGER DEFAULT 0,
+                    last_streak_date    TEXT,
+                    last_active         TEXT,
+                    last_reminder_sent  TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS sessions (
@@ -62,6 +64,8 @@ class Database:
                 "ALTER TABLE users ADD COLUMN questions_today INTEGER DEFAULT 0",
                 "ALTER TABLE users ADD COLUMN last_question_date TEXT",
                 "ALTER TABLE sessions ADD COLUMN question_cache TEXT DEFAULT '[]'",
+                "ALTER TABLE users ADD COLUMN last_active TEXT",
+                "ALTER TABLE users ADD COLUMN last_reminder_sent TEXT",
             ]:
                 try:
                     conn.execute(stmt)
@@ -81,16 +85,18 @@ class Database:
     # ── Users ──────────────────────────────────────────────────────────────
 
     def upsert_user(self, user_id: int, username: str, first_name: str):
+        now = datetime.now(timezone.utc).isoformat()
         with self._conn() as conn:
             conn.execute(
                 """
-                INSERT INTO users (user_id, username, first_name)
-                VALUES (?, ?, ?)
+                INSERT INTO users (user_id, username, first_name, last_active)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,
                                                    first_name=excluded.first_name,
+                                                   last_active=excluded.last_active,
                                                    is_paused=0
                 """,
-                (user_id, username, first_name),
+                (user_id, username, first_name, now),
             )
 
     def get_user(self, user_id: int) -> Optional[Dict]:
@@ -136,6 +142,30 @@ class Database:
             conn.execute(
                 "UPDATE users SET is_paused = ? WHERE user_id = ?",
                 (int(paused), user_id),
+            )
+
+    def get_all_users(self) -> list[Dict]:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM users").fetchall()
+            return [
+                {
+                    "user_id": r["user_id"],
+                    "first_name": r["first_name"] or "",
+                    "last_active": r["last_active"] or "",
+                    "last_reminder_sent": r["last_reminder_sent"] or "",
+                    "current_streak": r["current_streak"] or 0,
+                    "is_paused": r["is_paused"] or 0,
+                    "tier": r["tier"] if "tier" in r.keys() else "default",
+                }
+                for r in rows
+            ]
+
+    def mark_reminder_sent(self, user_id: int):
+        now = datetime.now(timezone.utc).isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE users SET last_reminder_sent = ? WHERE user_id = ?",
+                (now, user_id),
             )
 
     def get_daily_usage(self, user_id: int) -> int:

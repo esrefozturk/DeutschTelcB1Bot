@@ -29,6 +29,33 @@ class TestUsers:
         assert user["user_id"] == 12345
         assert user["username"] == "alice"
         assert user["first_name"] == "Alice"
+        assert user["last_active"] is not None
+
+    def test_upsert_clears_is_paused(self, db):
+        db.upsert_user(1, "u", "U")
+        db.set_paused(1, True)
+        assert db.get_user(1)["is_paused"] == 1
+        db.upsert_user(1, "u", "U")
+        assert db.get_user(1)["is_paused"] == 0
+
+    def test_get_all_users(self, db):
+        db.upsert_user(1, "alice", "Alice")
+        db.upsert_user(2, "bob", "Bob")
+        users = db.get_all_users()
+        assert len(users) == 2
+        ids = {u["user_id"] for u in users}
+        assert ids == {1, 2}
+        for u in users:
+            assert "last_active" in u
+            assert "last_reminder_sent" in u
+            assert "is_paused" in u
+            assert "current_streak" in u
+
+    def test_mark_reminder_sent(self, db):
+        db.upsert_user(1, "u", "U")
+        assert db.get_user(1)["last_reminder_sent"] is None
+        db.mark_reminder_sent(1)
+        assert db.get_user(1)["last_reminder_sent"] is not None
 
     def test_upsert_updates_existing(self, db):
         db.upsert_user(1, "old", "Old")
