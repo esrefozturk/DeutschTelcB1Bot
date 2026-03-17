@@ -93,8 +93,7 @@ class Database:
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,
                                                    first_name=excluded.first_name,
-                                                   last_active=excluded.last_active,
-                                                   is_paused=0
+                                                   last_active=excluded.last_active
                 """,
                 (user_id, username, first_name, now),
             )

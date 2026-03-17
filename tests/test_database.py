@@ -31,12 +31,18 @@ class TestUsers:
         assert user["first_name"] == "Alice"
         assert user["last_active"] is not None
 
-    def test_upsert_clears_is_paused(self, db):
+    def test_upsert_does_not_clear_is_paused(self, db):
         db.upsert_user(1, "u", "U")
         db.set_paused(1, True)
         assert db.get_user(1)["is_paused"] == 1
         db.upsert_user(1, "u", "U")
-        assert db.get_user(1)["is_paused"] == 0
+        assert db.get_user(1)["is_paused"] == 1  # pause survives any interaction
+
+    def test_update_streak_clears_is_paused(self, db):
+        db.upsert_user(1, "u", "U")
+        db.set_paused(1, True)
+        db.update_streak(1)
+        assert db.get_user(1)["is_paused"] == 0  # answering a question resumes
 
     def test_get_all_users(self, db):
         db.upsert_user(1, "alice", "Alice")
