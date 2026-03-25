@@ -234,7 +234,23 @@ async def _maybe_send_inactivity_nudge(bot, user: dict, now: datetime) -> None:
 
     last_active_str = user.get("last_active", "")
     if not last_active_str:
-        return  # user has never been active
+        # Never been active — use created_at to decide if we should auto-pause
+        created_at_str = user.get("created_at", "")
+        if created_at_str:
+            try:
+                created_at = datetime.fromisoformat(created_at_str)
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                if (now - created_at).total_seconds() / 3600 >= AUTO_PAUSE_DAYS * 24:
+                    _db.set_paused(uid, True)
+                    logger.info(
+                        "Auto-paused user %s (never active, registered %.1f days ago)",
+                        uid,
+                        (now - created_at).total_seconds() / 86400,
+                    )
+            except ValueError:
+                pass
+        return
 
     try:
         last_active = datetime.fromisoformat(last_active_str)
