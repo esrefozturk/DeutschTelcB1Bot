@@ -72,6 +72,7 @@ class DynamoDatabase:
                     {
                         "user_id": int(item["user_id"]),
                         "first_name": item.get("first_name", ""),
+                        "created_at": item.get("created_at", ""),
                         "last_active": item.get("last_active", ""),
                         "last_reminder_sent": item.get("last_reminder_sent", ""),
                         "current_streak": _int(item.get("current_streak", 0)),
