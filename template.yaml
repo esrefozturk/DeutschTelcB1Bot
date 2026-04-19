@@ -72,31 +72,6 @@ Resources:
             Path: /webhook
             Method: POST
 
-        # Inactivity nudge: every hour between 08:00-20:00 UTC
-        # Lambda checks if user's last activity was 4+ hours ago
-        InactivityCheck:
-          Type: Schedule
-          Properties:
-            Schedule: cron(0 8-20 * * ? *)
-            Description: "Hourly inactivity check (08:00-20:00 UTC)"
-            Input: '{"reminder_type": "inactivity"}'
-
-        # Question cache prefill: every hour between 08:00-20:00 UTC
-        # Pre-generates up to 5 questions per active user so responses are instant
-        QuestionCacheRefill:
-          Type: Schedule
-          Properties:
-            Schedule: cron(0 8-20 * * ? *)
-            Description: "Hourly question cache prefill (08:00-20:00 UTC)"
-            Input: '{"reminder_type": "cache_refill"}'
-
-        # Weekly summary: every Sunday at 08:00 UTC
-        WeeklySummary:
-          Type: Schedule
-          Properties:
-            Schedule: cron(0 8 ? * SUN *)
-            Description: "Weekly progress summary on Sundays at 08:00 UTC"
-            Input: '{"reminder_type": "weekly"}'
 
   # ── API Gateway ─────────────────────────────────────────────────────────
   BotApi:
